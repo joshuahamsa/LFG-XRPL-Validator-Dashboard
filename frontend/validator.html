@@ -22,6 +22,20 @@
   <title>XRPL Validator — Joshua Hamsa</title>
   <link rel="stylesheet" href="styles.css">
   <link rel="icon" href="favicon.ico" type="image/x-icon">
+  <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
+  <meta name="description" content="Live dashboard for the joshuahamsa.com XRP Ledger validator — consensus state, ledger, peers, system health, and amendment votes, refreshed every 5 seconds.">
+  <link rel="canonical" href="https://joshuahamsa.com/validator.html">
+  <meta name="theme-color" content="#0f0f0f">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Joshua Hamsa">
+  <meta property="og:title" content="XRPL Validator — joshuahamsa.com">
+  <meta property="og:description" content="Live dashboard for a home-run XRP Ledger validator: consensus state, ledger, peers, system health, and amendment votes.">
+  <meta property="og:url" content="https://joshuahamsa.com/validator.html">
+  <meta property="og:image" content="https://joshuahamsa.com/og-image.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:site" content="@joshuahamsa">
 </head>
 <body>
   <div class="container">
@@ -42,10 +56,13 @@
     </header>
 
     <main>
+      <!-- Starship prompts (LFG config, same as the rest of the site) -->
+      <div class="val-prompt" aria-hidden="true"><span class="prompt"><span class="prompt-line"><span class="sticker sticker--lfg">LFG!</span> <span class="sticker sticker--dir">~/validator</span> <span class="sticker sticker--time">&#xf017; <span class="prompt-time">--:--</span></span></span><span class="sticker sticker--mainnet">&#xf071; XRPL MAINNET</span> <span class="prompt-char">❯</span></span> <span class="command">validator status</span></div>
       <div id="val-offline" class="val-offline" style="display:none">
-        <span class="val-red">[OFFLINE]</span> last seen: <span id="val-last-seen">—</span>
+        <span class="val-red">[OFFLINE]</span> <span id="val-last-seen-label">last seen:</span> <span id="val-last-seen">—</span>
       </div>
       <pre id="val-pre" class="val-pre">connecting...</pre>
+      <div class="val-prompt" aria-hidden="true"><span class="prompt"><span class="prompt-line"><span class="sticker sticker--lfg">LFG!</span> <span class="sticker sticker--dir">~/validator</span> <span class="sticker sticker--time">&#xf017; <span class="prompt-time">--:--</span></span></span><span class="sticker sticker--mainnet">&#xf071; XRPL MAINNET</span> <span class="prompt-char">❯</span></span> <span class="command">validator amendments</span></div>
       <pre id="amd-pre" class="val-pre">connecting...</pre>
       <div id="val-footer" class="val-footer val-dim">updated — · refreshing every 5s</div>
     </main>
@@ -87,12 +104,12 @@
     function progressBar(pct) {
       const filled = Math.min(10, Math.floor(pct * 10 / 100));
       const bar = '█'.repeat(filled) + '░'.repeat(10 - filled);
-      const cls = pct >= 81 ? 'red' : pct >= 61 ? 'amber' : 'green';
+      const cls = pct >= 81 ? 'red' : pct >= 61 ? 'orange' : 'green';
       return span(cls, bar);
     }
 
     function pctSpan(pct) {
-      const cls = pct >= 81 ? 'red' : pct >= 61 ? 'amber' : 'green';
+      const cls = pct >= 81 ? 'red' : pct >= 61 ? 'orange' : 'green';
       return span(cls, String(pct).padStart(3) + '%');
     }
 
@@ -105,7 +122,7 @@
 
     function stateColor(state) {
       if (state === 'proposing' || state === 'full') return 'green';
-      if (['connected', 'syncing', 'tracking'].includes(state)) return 'amber';
+      if (['connected', 'syncing', 'tracking'].includes(state)) return 'orange';
       return 'red';
     }
 
@@ -131,7 +148,7 @@
       const ldash = Math.floor(dashes / 2);
       const rdash = dashes - ldash;
       lines.push(`╔${H65}╗`);
-      lines.push(`║${span('cyan', '─'.repeat(ldash) + ' ' + label + ' ' + '─'.repeat(rdash))}║`);
+      lines.push(`║${span('blue', '─'.repeat(ldash) + ' ' + label + ' ' + '─'.repeat(rdash))}║`);
 
       if (amendments.length === 0) {
         lines.push(`║${rpad(span('dim', '  no pending amendments'), 65)}║`);
@@ -147,7 +164,7 @@
         const voteStr = a.vote === 'yes' ? span('green', 'YES') : span('red', 'NO ');
         let status, sCls;
         if (a.majority) {
-          status = '★ MAJORITY'; sCls = 'amber';
+          status = '★ MAJORITY'; sCls = 'yellow';
         } else if (!a.supported) {
           status = 'pending · unsupported'; sCls = 'dim';
         } else {
@@ -183,35 +200,37 @@
         '╚══════╝╚═╝      ╚═════╝   ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝     ╚══════╝',
       ];
       lines.push(`╔${H65}╗`);
+      // LFG wordmark: L orange, F red, G blue (cols 0-7 / 8-15 / 16-24), XRPL canvas
       for (const row of BANNER) {
-        lines.push(`║   ${span('magenta', row)}   ║`);
+        lines.push(`║   ${span('orange', row.slice(0, 8))}${span('red', row.slice(8, 16))}` +
+                   `${span('blue', row.slice(16, 25))}${span('canvas', row.slice(25))}   ║`);
       }
       const sub = `▸▸  ${id.domain}  ·  ${id.public_key_short}  ◂◂`;
       const sp = Math.floor((65 - sub.length) / 2);
-      lines.push(`║${' '.repeat(sp)}${span('white', sub)}${' '.repeat(65 - sub.length - sp)}║`);
+      lines.push(`║${' '.repeat(sp)}${span('canvas', sub)}${' '.repeat(65 - sub.length - sp)}║`);
 
       // Validator | System
       lines.push(`╠${H30}╦${H34}╣`);
       lines.push(twoCol(
-        span('cyan', '─'.repeat(9) + ' VALIDATOR ' + '─'.repeat(10)),
-        span('cyan', '─'.repeat(13) + ' SYSTEM ' + '─'.repeat(13))
+        span('blue', '─'.repeat(9) + ' VALIDATOR ' + '─'.repeat(10)),
+        span('blue', '─'.repeat(13) + ' SYSTEM ' + '─'.repeat(13))
       ));
 
       const sc = stateColor(v.state);
       lines.push(twoCol(`  state    ${span(sc, v.state)}`,
                         `  CPU  ${progressBar(s.cpu_pct)} ${pctSpan(s.cpu_pct)}`));
-      lines.push(twoCol(`  ledger   ${span('white', String(v.ledger_seq))}`,
-                        `  RAM  ${progressBar(s.ram_pct)} ${span(s.ram_pct >= 81 ? 'red' : s.ram_pct >= 61 ? 'amber' : 'green', s.ram_used_gb + '/' + s.ram_total_gb + 'G')}`));
+      lines.push(twoCol(`  ledger   ${span('canvas', String(v.ledger_seq))}`,
+                        `  RAM  ${progressBar(s.ram_pct)} ${span(s.ram_pct >= 81 ? 'red' : s.ram_pct >= 61 ? 'orange' : 'green', s.ram_used_gb + '/' + s.ram_total_gb + 'G')}`));
       lines.push(twoCol(`  node up  ${span('green', formatUptime(v.rippled_uptime_s))}`,
                         `  Disk ${progressBar(s.disk_pct)} ${pctSpan(s.disk_pct)}`));
-      const loadCls = v.load_factor > 1.0 ? 'amber' : 'green';
+      const loadCls = v.load_factor > 1.0 ? 'orange' : 'green';
       lines.push(twoCol(`  load     ${span(loadCls, v.load_factor.toFixed(2))}`,
                         `  Up   ${span('green', formatUptime(s.uptime_s))}`));
-      const peerCls = v.peers < 4 ? 'red' : v.peers < 10 ? 'amber' : 'green';
-      const tCls = s.cpu_temp_c >= 80 ? 'red' : s.cpu_temp_c >= 60 ? 'amber' : 'green';
+      const peerCls = v.peers < 4 ? 'red' : v.peers < 10 ? 'orange' : 'green';
+      const tCls = s.cpu_temp_c >= 80 ? 'red' : s.cpu_temp_c >= 60 ? 'orange' : 'green';
       const tempStr = s.cpu_temp_c !== null ? `  Temp ${span(tCls, s.cpu_temp_c + '°C')}` : '';
       lines.push(twoCol(`  peers    ${span(peerCls, String(v.peers))}`, tempStr));
-      const cpuWStr = s.cpu_w !== null ? `  CPU W  ${span('white', s.cpu_w + 'W')}` : '';
+      const cpuWStr = s.cpu_w !== null ? `  CPU W  ${span('canvas', s.cpu_w + 'W')}` : '';
       // Custom builds (e.g. "3.2.0-hamsa-manifest-filter.1") blow past the 30-char
       // left column and shove CPU W out of alignment — clip, keep full text on hover.
       const verLabel = '  version  ';
@@ -225,6 +244,20 @@
       lines.push(`╚${H65}╝`);
 
       return lines;
+    }
+
+    // Starship prompts above each panel: the time sticker shows the last
+    // successful fetch, and ❯ turns red while the validator is unreachable
+    // (Starship's error_symbol after a failed command).
+    function setPrompts(online) {
+      if (online) {
+        const now = new Date();
+        const hhmm = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+        document.querySelectorAll('.val-prompt .prompt-time').forEach((el) => { el.textContent = hhmm; });
+      }
+      document.querySelectorAll('.val-prompt .prompt-char').forEach((el) => {
+        el.classList.toggle('prompt-char--error', !online);
+      });
     }
 
     function renderData(data) {
@@ -241,6 +274,7 @@
             '<span class="val-dim">  METRICS_URL not configured.\n  Run:  bash motd/setup.sh</span>';
         document.getElementById('val-footer').textContent =
             'configure METRICS_URL to enable live data';
+        setPrompts(false);
         return;
       }
       const controller = new AbortController();
@@ -253,15 +287,24 @@
         lastData = data;
         lastSeenAt = new Date();
         document.getElementById('val-offline').style.display = 'none';
+        document.getElementById('val-last-seen-label').textContent = 'last seen:';
         document.getElementById('val-pre').classList.remove('val-dimmed');
         renderData(data);
+        setPrompts(true);
       } catch (e) {
         clearTimeout(tid);
+        document.getElementById('val-offline').style.display = 'block';
+        setPrompts(false);
         if (lastSeenAt) {
           document.getElementById('val-last-seen').textContent = lastSeenAt.toUTCString();
-          document.getElementById('val-offline').style.display = 'block';
           document.getElementById('val-pre').classList.add('val-dimmed');
           if (lastData) renderData(lastData);
+        } else {
+          // Never connected this session — don't leave "connecting..." up forever.
+          document.getElementById('val-last-seen-label').textContent = 'unable to reach validator';
+          document.getElementById('val-last-seen').textContent = '— retrying every 5s';
+          document.getElementById('val-pre').textContent = '';
+          document.getElementById('amd-pre').textContent = '';
         }
       }
     }
