@@ -321,6 +321,43 @@ done < <(print_amendments)
 $amd_err_width_ok || fail "fallback error state: produced row" "" "at least one row"
 AMD_ERROR=false
 
+# ── LFG palette ──────────────────────────────────────────────────────────────
+echo ""
+echo "=== LFG palette (matches starship-lfg.toml) ==="
+
+check_color() {
+    local name="$1" want="$2"
+    [[ "${!name:-}" == "$want" ]] && ok "palette: $name" || fail "palette: $name" "${!name:-}" "$want"
+}
+check_color ORANGE $'\e[38;2;216;144;48m'   # builder_orange #D89030
+check_color RED    $'\e[38;2;216;72;48m'    # effing_red     #D84830
+check_color BLUE   $'\e[38;2;72;144;192m'   # go_blue        #4890C0
+check_color YELLOW $'\e[38;2;240;216;72m'   # hardhat_yellow #F0D848
+check_color GREEN  $'\e[38;2;61;163;93m'    # super_green    #3DA35D
+check_color CANVAS $'\e[38;2;236;234;228m'  # canvas         #ECEAE4
+
+echo ""
+echo "=== print_header banner ==="
+
+# Banner rows: 80 visible chars, and L / F / G / XRPL in orange / red / blue / canvas
+# print_header = box top, 6 banner rows, subtitle
+mapfile -t header_lines < <(print_header)
+[[ ${#header_lines[@]} -eq 8 ]] \
+    && ok "print_header: 8 lines" \
+    || fail "print_header: 8 lines" "${#header_lines[@]}" "8"
+for i in "${!_BANNER[@]}"; do
+    line="${header_lines[$(( i + 1 ))]:-}"
+    stripped=$(strip_ansi "$line")
+    [[ ${#stripped} -eq 80 ]] \
+        && ok "banner row $i: width 80" \
+        || fail "banner row $i: width 80" "${#stripped}" "80"
+    row="${_BANNER[$i]}"
+    want="${ORANGE}${row:0:8}${RESET}${RED}${row:8:8}${RESET}${BLUE}${row:16:9}${RESET}${CANVAS}${row:25}${RESET}"
+    [[ "$line" == *"$want"* ]] \
+        && ok "banner row $i: LFG wordmark colours" \
+        || fail "banner row $i: LFG wordmark colours" "$line" "contains $want"
+done
+
 echo ""
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [[ $FAIL -eq 0 ]]
