@@ -7,7 +7,24 @@
   --terminal-header: #1a1a1a;
   --link-color: #4a9eff;
   --link-hover: #66b3ff;
+  /* LFG palette, from my Starship config */
+  --lfg-builder-orange: #D89030;
+  --lfg-effing-red: #D84830;
+  --lfg-go-blue: #4890C0;
+  --lfg-hardhat-yellow: #F0D848;
   --lfg-super-green: #3DA35D;
+  --lfg-ink: #0A0A0A;
+  --lfg-canvas: #ECEAE4;
+  --font-mono: ui-monospace, "SF Mono", "Cascadia Code", "JetBrains Mono", Menlo, Consolas, "DejaVu Sans Mono", "Liberation Mono", monospace;
+}
+
+/* Nerd Font icons used by the prompt (branch, clock, warning), subset from
+   JetBrains Mono Nerd Font. unicode-range keeps it to just those glyphs. */
+@font-face {
+  font-family: "Nerd Icons";
+  src: url("/assets/fonts/nerd-icons.woff2") format("woff2");
+  unicode-range: U+E0A0, U+F017, U+F071;
+  font-display: swap;
 }
 
 * {
@@ -17,7 +34,7 @@
 }
 
 body {
-  font-family: "Courier New", monospace;
+  font-family: var(--font-mono);
   background-color: var(--bg-color);
   color: var(--text-color);
   line-height: 1.6;
@@ -68,6 +85,11 @@ body {
 
 .terminal-title {
   flex-grow: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding-left: 0.75rem;
   text-align: center;
   font-size: 0.9rem;
   color: var(--secondary-color);
@@ -81,7 +103,7 @@ body {
   flex-direction: column-reverse;
   background-color: #111;
   color: #0f0;
-  font-family: monospace;
+  font-family: var(--font-mono);
   padding: 1em;
   border-radius: 6px;
   border: 1px solid #333;
@@ -94,14 +116,52 @@ body {
   line-height: 1.8;
 }
 
-/* Starship prompt (LFG config); the nav links use just the ❯ */
+/* Starship prompt (LFG config): a row of rounded "stickers", then ❯ */
 .prompt {
+  font-family: "Nerd Icons", var(--font-mono);
   white-space: nowrap;
+}
+
+.prompt-line {
+  display: block;
+  margin-bottom: 0.2rem;
+}
+
+.sticker {
+  display: inline-block;
+  padding: 0 1ch;
+  border-radius: 999px;
+  line-height: 1.5;
+  color: var(--lfg-ink);
+  font-weight: bold;
+}
+
+.sticker--lfg,
+.sticker--mainnet {
+  background-color: var(--lfg-effing-red);
+}
+
+.sticker--dir {
+  background-color: var(--lfg-builder-orange);
+}
+
+.sticker--git {
+  background-color: var(--lfg-go-blue);
+  font-weight: normal;
+}
+
+.sticker--time {
+  background-color: var(--lfg-hardhat-yellow);
 }
 
 .prompt-char {
   color: var(--lfg-super-green);
   font-weight: bold;
+}
+
+/* ❯ turns red when the previous command exited non-zero */
+.prompt-char--error {
+  color: var(--lfg-effing-red);
 }
 
 .command {
@@ -112,6 +172,10 @@ body {
   margin-top: 0.5rem;
   margin-bottom: 1rem;
   padding-left: 1.5rem;
+}
+
+.no-output {
+  margin-bottom: 1rem;
 }
 
 .cursor {
@@ -260,6 +324,19 @@ footer {
   color: var(--secondary-color);
 }
 
+/* Visually hidden, still read by screen readers and search engines */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 /* Responsive adjustments */
 @media (max-width: 768px) {
   .container {
@@ -306,7 +383,7 @@ footer {
 }
 
 .blog-date {
-  font-family: monospace;
+  font-family: var(--font-mono);
   color: var(--secondary-color);
   font-size: 0.9rem;
   white-space: nowrap;
@@ -341,12 +418,6 @@ footer {
 
 .terminal-link:hover {
   color: var(--link-hover);
-}
-
-.terminal-link.disabled {
-  color: var(--secondary-color);
-  cursor: not-allowed;
-  opacity: 0.6;
 }
 
 .blog-nav {
@@ -411,11 +482,83 @@ footer {
 }
 
 .post-content code {
-  font-family: "Courier New", monospace;
+  font-family: var(--font-mono);
 }
 
 .post-content ul {
   margin-bottom: 1.5rem;
+}
+
+.post-content h2 {
+  font-size: 1.15rem;
+  margin: 2.5rem 0 1rem;
+  color: var(--text-color);
+}
+
+.post-content h2::before {
+  content: "## ";
+  color: var(--accent-color);
+}
+
+.post-content a {
+  color: var(--link-color);
+  text-decoration: none;
+}
+
+.post-content a:hover {
+  color: var(--link-hover);
+  text-decoration: underline;
+}
+
+.post-content strong {
+  color: var(--text-color);
+}
+
+.post-content :not(pre) > code {
+  background-color: #1a1a1a;
+  padding: 0.1rem 0.35rem;
+  border-radius: 4px;
+  font-size: 0.9em;
+}
+
+.post-content .table-scroll {
+  overflow-x: auto;
+  margin-bottom: 1.5rem;
+}
+
+.post-content table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.post-content th,
+.post-content td {
+  text-align: left;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px dashed #333;
+}
+
+.post-content th {
+  color: var(--secondary-color);
+  font-weight: normal;
+  border-bottom: 1px solid #333;
+}
+
+.post-content figure {
+  margin: 2rem 0;
+}
+
+.post-content figure img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.post-content figcaption {
+  margin-top: 0.5rem;
+  font-size: 0.85rem;
+  color: var(--secondary-color);
 }
 
 .post-navigation {
@@ -433,7 +576,7 @@ footer {
 .val-pre {
   background-color: var(--bg-color);
   color: var(--text-color);
-  font-family: 'Courier New', monospace;
+  font-family: var(--font-mono);
   font-size: min(14px, calc((100vw - 2rem) / 40));
   line-height: 1.4;
   overflow-x: auto;
@@ -444,25 +587,58 @@ footer {
 }
 
 .val-offline {
-  font-family: 'Courier New', monospace;
+  font-family: var(--font-mono);
   font-size: 14px;
   padding: 4px 0 8px 0;
 }
 
 .val-footer {
-  font-family: 'Courier New', monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
   padding-top: 6px;
 }
 
 .val-dimmed { opacity: 0.45; }
 
-/* MOTD-matched color palette */
-.val-magenta { color: #c040c0; }
-.val-cyan    { color: #00ffff; }
-.val-yellow  { color: #ffff44; }
-.val-green   { color: var(--accent-color); }
-.val-red     { color: #ff4444; }
-.val-amber   { color: #cc8800; }
-.val-white   { color: #f0f0f0; }
-.val-dim     { opacity: 0.45; }
+/* Starship prompt above each panel (same markup as the site's section headers) */
+.val-prompt {
+  font-size: 14px;
+  margin: 1.5rem 0 0.5rem;
+}
+
+@media (max-width: 480px) {
+  .val-prompt {
+    font-size: 12px;
+  }
+}
+
+/* LFG palette, same values as the MOTD's truecolor codes */
+.val-orange { color: var(--lfg-builder-orange); }
+.val-red    { color: var(--lfg-effing-red); }
+.val-blue   { color: var(--lfg-go-blue); }
+.val-yellow { color: var(--lfg-hardhat-yellow); }
+.val-green  { color: var(--lfg-super-green); }
+.val-canvas { color: var(--lfg-canvas); }
+.val-dim    { opacity: 0.45; }
+
+/* 404 page */
+.notfound-error {
+  color: #ff4444;
+  font-size: 1rem;
+  font-weight: normal;
+  margin-bottom: 1rem;
+  overflow-wrap: anywhere;
+}
+
+.notfound-hint {
+  color: var(--secondary-color);
+  margin-bottom: 1.5rem;
+}
+
+.notfound-prompt {
+  margin-bottom: 1rem;
+}
+
+.notfound-desc {
+  color: var(--secondary-color);
+}
