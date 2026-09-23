@@ -37,14 +37,15 @@ XRPLD_UNIT="${XRPLD_UNIT:-${RIPPLED_UNIT:-xrpld}}"
 XRPLD_ADMIN_RPC="${XRPLD_ADMIN_RPC:-127.0.0.1:5006}"
 
 # ── ANSI color codes ──────────────────────────────────────────────────────────
+# LFG palette, from my Starship config (starship-lfg.toml). 24-bit truecolor;
+# frontend/styles.css uses the same hex values for the web dashboard.
 RESET=$'\e[0m'
-CYAN=$'\e[96m'
-MAGENTA=$'\e[35m'
-YELLOW=$'\e[93m'
-GREEN=$'\e[92m'
-RED=$'\e[91m'
-AMBER=$'\e[33m'
-WHITE=$'\e[37m'
+ORANGE=$'\e[38;2;216;144;48m'   # builder_orange #D89030
+RED=$'\e[38;2;216;72;48m'       # effing_red     #D84830
+BLUE=$'\e[38;2;72;144;192m'     # go_blue        #4890C0
+YELLOW=$'\e[38;2;240;216;72m'   # hardhat_yellow #F0D848
+GREEN=$'\e[38;2;61;163;93m'     # super_green    #3DA35D
+CANVAS=$'\e[38;2;236;234;228m'  # canvas         #ECEAE4
 DIM=$'\e[2m'
 
 # ── Layout ────────────────────────────────────────────────────────────────────
@@ -94,7 +95,7 @@ progress_bar() {
     local bar="" i
     local color
     if   (( pct >= 81 )); then color="$RED"
-    elif (( pct >= 61 )); then color="$AMBER"
+    elif (( pct >= 61 )); then color="$ORANGE"
     else                       color="$GREEN"
     fi
     for (( i=0; i<filled; i++ )); do bar+="█"; done
@@ -126,23 +127,23 @@ _BOX_SPL="╠${_H38}╦${_H39}╣"   # open two-column split
 _BOX_JOI="╠${_H38}╬${_H39}╣"   # mid two-column join
 _BOX_CLS="╠${_H38}╩${_H39}╣"   # close two-column (╩ rejoins)
 
-box_top()     { printf '%s%s%s\n' "$CYAN" "$_BOX_TOP" "$RESET"; }
-box_bottom()  { printf '%s%s%s\n' "$CYAN" "$_BOX_BOT" "$RESET"; }
-box_mid()     { printf '%s%s%s\n' "$CYAN" "$_BOX_MID" "$RESET"; }
-box_split()   { printf '%s%s%s\n' "$CYAN" "$_BOX_SPL" "$RESET"; }
-box_join()    { printf '%s%s%s\n' "$CYAN" "$_BOX_JOI" "$RESET"; }
-box_close()   { printf '%s%s%s\n' "$CYAN" "$_BOX_CLS" "$RESET"; }
+box_top()     { printf '%s%s%s\n' "$BLUE" "$_BOX_TOP" "$RESET"; }
+box_bottom()  { printf '%s%s%s\n' "$BLUE" "$_BOX_BOT" "$RESET"; }
+box_mid()     { printf '%s%s%s\n' "$BLUE" "$_BOX_MID" "$RESET"; }
+box_split()   { printf '%s%s%s\n' "$BLUE" "$_BOX_SPL" "$RESET"; }
+box_join()    { printf '%s%s%s\n' "$BLUE" "$_BOX_JOI" "$RESET"; }
+box_close()   { printf '%s%s%s\n' "$BLUE" "$_BOX_CLS" "$RESET"; }
 
 # Single-column content row. $1 must be exactly 78 *visible* chars; ANSI codes are allowed (they add no visible width).
 # Wrap $1 in color codes BEFORE calling if needed; padding must be plain.
 box_row() {
-    printf '%s║%s%s%s║%s\n' "$CYAN" "$RESET" "$1" "$CYAN" "$RESET"
+    printf '%s║%s%s%s║%s\n' "$BLUE" "$RESET" "$1" "$BLUE" "$RESET"
 }
 
 # Two-column content row. $1=38 visible chars, $2=39 visible chars (plain or pre-colored).
 box_row2() {
     printf '%s║%s%s%s║%s%s%s║%s\n' \
-        "$CYAN" "$RESET" "$1" "$CYAN" "$RESET" "$2" "$CYAN" "$RESET"
+        "$BLUE" "$RESET" "$1" "$BLUE" "$RESET" "$2" "$BLUE" "$RESET"
 }
 
 # ── LFG XRPL banner (figlet block font, 59 chars wide, 6 rows) ───────────────
@@ -173,8 +174,9 @@ print_header() {
     box_top
     local row
     for row in "${_BANNER[@]}"; do
+        # LFG wordmark: L orange, F red, G blue (cols 0-7 / 8-15 / 16-24), XRPL canvas.
         # 9 spaces (plain) + colored banner + 10 spaces (plain) = 78 visible chars
-        box_row "${_BANNER_LPAD}${MAGENTA}${row}${RESET}${_BANNER_RPAD}"
+        box_row "${_BANNER_LPAD}${ORANGE}${row:0:8}${RESET}${RED}${row:8:8}${RESET}${BLUE}${row:16:9}${RESET}${CANVAS}${row:25}${RESET}${_BANNER_RPAD}"
     done
 
     # Subtitle: "▸▸  domain  ·  key  ·  Manifest #N  ◂◂" centered in 78
@@ -187,7 +189,7 @@ print_header() {
     local lpad rpad
     printf -v lpad '%*s' "$sub_lp" ""
     printf -v rpad '%*s' "$sub_rp" ""
-    box_row "${lpad}${WHITE}${plain_sub}${RESET}${rpad}"
+    box_row "${lpad}${CANVAS}${plain_sub}${RESET}${rpad}"
 }
 
 # ── Data collection (called once in main, sets globals) ───────────────────────
@@ -344,14 +346,14 @@ print_validator_system() {
     local load_color="$GREEN"
     local load_num
     load_num=$(printf '%s' "$RPC_LOAD" | grep -oP '^[0-9]+(\.[0-9]+)?' || echo "0")
-    (( $(awk "BEGIN{print ($load_num > 5) ? 1 : 0}") )) && load_color="$AMBER"
+    (( $(awk "BEGIN{print ($load_num > 5) ? 1 : 0}") )) && load_color="$ORANGE"
     (( $(awk "BEGIN{print ($load_num > 20) ? 1 : 0}") )) && load_color="$RED"
 
     # Ledger age color thresholds
     local age_color="$GREEN"
     local age_num
     age_num=$(printf '%s' "$RPC_LEDGER_AGE" | grep -oP '^[0-9]+' || echo "0")
-    (( age_num > 10 )) && age_color="$AMBER"
+    (( age_num > 10 )) && age_color="$ORANGE"
     (( age_num > 30 )) && age_color="$RED"
 
     # Format ledger seq with commas
@@ -416,7 +418,7 @@ print_validator_system() {
         "    Up    ${GREEN}$(rpad "$SYS_UPTIME" $(( RIGHT_COL - 10 )))${RESET}"
     if [[ -n "$SYS_CPU_TEMP_C" ]]; then
         local temp_color="$GREEN"
-        (( SYS_CPU_TEMP_C >= 60 )) && temp_color="$AMBER"
+        (( SYS_CPU_TEMP_C >= 60 )) && temp_color="$ORANGE"
         (( SYS_CPU_TEMP_C >= 80 )) && temp_color="$RED"
         box_row2 \
             "$(rpad "" $LEFT_COL)" \
@@ -425,7 +427,7 @@ print_validator_system() {
     if [[ -n "$SYS_CPU_W" ]]; then
         box_row2 \
             "$(rpad "" $LEFT_COL)" \
-            "    CPU W ${WHITE}$(rpad "${SYS_CPU_W}W" $(( RIGHT_COL - 10 )))${RESET}"
+            "    CPU W ${CANVAS}$(rpad "${SYS_CPU_W}W" $(( RIGHT_COL - 10 )))${RESET}"
     fi
 }
 
@@ -436,7 +438,7 @@ print_peers_network() {
     local peer_color="$GREEN"
     local peer_num
     peer_num=$(printf '%s' "$RPC_PEERS" | grep -oP '^[0-9]+' || echo "0")
-    (( peer_num < 4  )) && peer_color="$AMBER"
+    (( peer_num < 4  )) && peer_color="$ORANGE"
     (( peer_num == 0 )) && peer_color="$RED"
 
     # P2P port status color
@@ -456,7 +458,7 @@ print_peers_network() {
     local disc_color="$GREEN"
     local disc_num
     disc_num=$(printf '%s' "$RPC_PEER_DISC" | grep -oP '^[0-9]+' || echo "0")
-    (( disc_num > 10  )) && disc_color="$AMBER"
+    (( disc_num > 10  )) && disc_color="$ORANGE"
     (( disc_num > 50  )) && disc_color="$RED"
 
     # Label widths (verified by character count):
@@ -503,7 +505,7 @@ print_alerts() {
         local line
         for line in "${ALERT_LINES[@]}"; do
             local color="$DIM"
-            [[ "$line" =~ ([Ww][Aa][Rr][Nn]|[Ww][Rr][Nn]) ]] && color="$AMBER"
+            [[ "$line" =~ ([Ww][Aa][Rr][Nn]|[Ww][Rr][Nn]) ]] && color="$ORANGE"
             [[ "$line" =~ [Ee][Rr][Rr] ]] && color="$RED"
             box_row "$(rpad "    ${color}${line}${RESET}" $(( 78 + ${#color} + ${#RESET} )))"
         done
@@ -531,7 +533,7 @@ print_amendments() {
     local hdash_l="" hdash_r="" _i
     for (( _i=0; _i<left;  _i++ )); do hdash_l+="─"; done
     for (( _i=0; _i<right; _i++ )); do hdash_r+="─"; done
-    box_row "${CYAN}${hdash_l} ${label} ${hdash_r}${RESET}"
+    box_row "${BLUE}${hdash_l} ${label} ${hdash_r}${RESET}"
 
     if [[ "$count" == "0" ]]; then
         box_row "$(rpad "    ${DIM}no pending amendments${RESET}" $(( 78 + ${#DIM} + ${#RESET} )))"
@@ -571,7 +573,7 @@ print_amendments() {
         local status_str status_color
         if [[ "$majority" == "true" ]]; then
             status_str="★ MAJORITY"
-            status_color="$AMBER"
+            status_color="$ORANGE"
         elif [[ "$supported" == "false" ]]; then
             status_str="pending · unsupported"
             status_color="$DIM"
@@ -612,7 +614,7 @@ print_identity() {
     (( trail < 0 )) && trail=0
 
     box_mid
-    box_row "  ${YELLOW}◈ IDENTITY${RESET}  Key: ${WHITE}${key_short}${RESET}  ·  Domain: ${WHITE}${domain}${RESET}  ·  Revoked: ${rev_color}${rev_label}${RESET}$(printf '%*s' $trail '')"
+    box_row "  ${YELLOW}◈ IDENTITY${RESET}  Key: ${CANVAS}${key_short}${RESET}  ·  Domain: ${CANVAS}${domain}${RESET}  ·  Revoked: ${rev_color}${rev_label}${RESET}$(printf '%*s' $trail '')"
 }
 
 print_footer() {
