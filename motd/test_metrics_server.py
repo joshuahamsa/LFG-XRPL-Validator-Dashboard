@@ -33,10 +33,6 @@ MOCK_METRICS = {
         "cpu_pct": 12, "ram_pct": 50, "ram_used_gb": 4.0,
         "ram_total_gb": 8, "disk_pct": 34, "uptime_s": 86400,
     },
-    "network": {
-        "lan_ip": "192.168.1.100", "tailscale_ip": "100.64.1.2",
-        "ssh_sessions": 1, "p2p_open": True,
-    },
     "alerts": ["WRN slow_close 4.2s"],
     "amendments": [],
 }
@@ -83,7 +79,7 @@ class TestHTTPIntegration(unittest.TestCase):
             f"http://127.0.0.1:{self.port}/metrics"
         ) as resp:
             data = json.loads(resp.read())
-        for key in ("timestamp", "validator", "identity", "system", "network", "alerts", "amendments"):
+        for key in ("timestamp", "validator", "identity", "system", "alerts", "amendments"):
             self.assertIn(key, data, f"missing top-level key: {key}")
 
     def test_unknown_path_returns_404(self):
@@ -242,33 +238,24 @@ class TestGetCpuPowerW(unittest.TestCase):
         self.assertIsNone(metrics_server.get_cpu_power_w())
 
 
-class TestGetNetworkInfo(unittest.TestCase):
-    @patch("metrics_server.subprocess.check_output")
-    def test_parses_tailscale_lan_ssh_p2p(self, mock_sub):
-        def side(cmd, **kw):
-            if "route" in cmd:
-                return "8.8.8.8 via 192.168.1.1 dev eth0 src 192.168.1.100 uid 0\n"
-            if cmd == ["ip", "addr", "show"]:
-                return "3: tailscale0:\n    inet 100.64.1.2/32 scope global tailscale0\n"
-            if cmd[0] == "ss" and "-l" not in cmd:
-                return "ESTAB  0  0  192.168.1.100:22  192.168.1.50:54321\n"
-            if "-tnlp" in cmd:
-                return "LISTEN  0  128  0.0.0.0:51235  0.0.0.0:*\n"
-            return ""
-        mock_sub.side_effect = side
-        result = metrics_server.get_network_info()
-        self.assertEqual(result["lan_ip"], "192.168.1.100")
-        self.assertEqual(result["tailscale_ip"], "100.64.1.2")
-        self.assertEqual(result["ssh_sessions"], 1)
-        self.assertTrue(result["p2p_open"])
+class TestPublicPayloadExposure(unittest.TestCase):
+    """/metrics is served publicly via Tailscale Funnel: no host network details."""
 
-    @patch("metrics_server.subprocess.check_output", side_effect=Exception("no network"))
-    def test_returns_safe_defaults_on_failure(self, _):
-        result = metrics_server.get_network_info()
-        self.assertEqual(result["tailscale_ip"], "unknown")
-        self.assertEqual(result["lan_ip"], "unknown")
-        self.assertEqual(result["ssh_sessions"], 0)
-        self.assertFalse(result["p2p_open"])
+    @patch("metrics_server.get_amendments", return_value=[])
+    @patch("metrics_server.get_alerts", return_value=[])
+    @patch("metrics_server.get_system_info", return_value={})
+    @patch("metrics_server.get_identity", return_value={})
+    @patch("metrics_server.get_validator_info", return_value={})
+    def test_collect_metrics_has_no_network_block(self, *_):
+        data = metrics_server.collect_metrics()
+        self.assertNotIn("network", data)
+        self.assertEqual(
+            set(data),
+            {"timestamp", "validator", "identity", "system", "alerts", "amendments"},
+        )
+
+    def test_get_network_info_removed(self):
+        self.assertFalse(hasattr(metrics_server, "get_network_info"))
 
 
 class TestGetAlerts(unittest.TestCase):
