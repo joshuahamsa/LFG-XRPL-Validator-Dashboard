@@ -12,8 +12,8 @@
     curl -s "https://joshuahamsa.com/validator.html?cb=$(date +%s)" | grep <your-change>
 
   Apply changes deliberately rather than copying the file wholesale — the two
-  have deliberately diverged (METRICS_URL value/comment, and the
-  "METRICS_URL not configured" guard which only exists here).
+  have deliberately diverged (METRICS_URL value/comment, the config.js
+  loader, and the "METRICS_URL not configured" guard, which only exist here).
 -->
 <html lang="en">
 <head>
@@ -68,8 +68,10 @@
     </main>
   </div>
 
+  <!-- Optional, git-ignored: written by motd/setup.sh. A 404 here is harmless. -->
+  <script src="config.js"></script>
   <script>
-    const METRICS_URL = ''; // set by setup.sh — run: bash motd/setup.sh
+    const METRICS_URL = window.METRICS_URL || ''; // from config.js (bash motd/setup.sh)
     const FETCH_INTERVAL_MS = 5000;
     const FETCH_TIMEOUT_MS = 4000;
 
@@ -271,7 +273,7 @@
     async function fetchMetrics() {
       if (!METRICS_URL) {
         document.getElementById('val-pre').innerHTML =
-            '<span class="val-dim">  METRICS_URL not configured.\n  Run:  bash motd/setup.sh</span>';
+            '<span class="val-dim">  METRICS_URL not configured.\n  Run:  bash motd/setup.sh  (writes frontend/config.js)</span>';
         document.getElementById('val-footer').textContent =
             'configure METRICS_URL to enable live data';
         setPrompts(false);
