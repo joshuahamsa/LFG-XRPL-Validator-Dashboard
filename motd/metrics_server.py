@@ -241,60 +241,6 @@ def get_cpu_power_w():
         return None
 
 
-def get_network_info():
-    lan_ip = "unknown"
-    try:
-        out = subprocess.check_output(
-            ["ip", "route", "get", "8.8.8.8"],
-            text=True, stderr=subprocess.DEVNULL
-        )
-        m = re.search(r'src (\S+)', out)
-        if m:
-            lan_ip = m.group(1)
-    except Exception:
-        pass
-
-    tailscale_ip = "unknown"
-    try:
-        out = subprocess.check_output(
-            ["ip", "addr", "show"], text=True, stderr=subprocess.DEVNULL
-        )
-        m = re.search(r'inet (100\.\d+\.\d+\.\d+)', out)
-        if m:
-            tailscale_ip = m.group(1)
-    except Exception:
-        pass
-
-    ssh_sessions = 0
-    try:
-        out = subprocess.check_output(
-            ["ss", "-tnp"], text=True, stderr=subprocess.DEVNULL
-        )
-        ssh_sessions = sum(
-            1 for line in out.splitlines()
-            if line.startswith("ESTAB") and
-            re.search(r':22\b', line.split()[3] if len(line.split()) > 3 else "")
-        )
-    except Exception:
-        pass
-
-    p2p_open = False
-    try:
-        out = subprocess.check_output(
-            ["ss", "-l", "-tnlp"], text=True, stderr=subprocess.DEVNULL
-        )
-        p2p_open = ":51235" in out
-    except Exception:
-        pass
-
-    return {
-        "lan_ip": lan_ip,
-        "tailscale_ip": tailscale_ip,
-        "ssh_sessions": ssh_sessions,
-        "p2p_open": p2p_open,
-    }
-
-
 def get_alerts():
     try:
         out = subprocess.check_output(
@@ -355,7 +301,6 @@ def collect_metrics():
         "validator": get_validator_info(),
         "identity": get_identity(),
         "system": get_system_info(),
-        "network": get_network_info(),
         "alerts": get_alerts(),
         "amendments": get_amendments(),
     }
