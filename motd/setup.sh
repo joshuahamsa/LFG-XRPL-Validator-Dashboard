@@ -48,8 +48,8 @@ VALIDATOR_JSON_DIR="${VALIDATOR_JSON_DIR:-$_detected_json_dir}"
 VALIDATOR_DOMAIN=$(_prompt VALIDATOR_DOMAIN "Your validator domain (e.g. mynode.example.com)" || echo "${VALIDATOR_DOMAIN:-}")
 
 echo ""
-echo "Tailscale Funnel URL is used by frontend/validator.html."
-echo "Leave blank if not set up yet — re-run setup.sh later to patch it."
+echo "Tailscale Funnel URL is used by frontend/validator.html (via frontend/config.js)."
+echo "Leave blank if not set up yet — re-run setup.sh later to set it."
 METRICS_URL=$(_prompt METRICS_URL "Tailscale Funnel URL (blank to skip)" || echo "${METRICS_URL:-}")
 
 REPO_PATH=$(_prompt REPO_PATH "Absolute path to this repo" || echo "${REPO_PATH:-$REPO_DIR}")
@@ -73,12 +73,15 @@ EOF
 echo ""
 echo "Written: $CONFIG_FILE"
 
-# Patch validator.html METRICS_URL
-HTML="$REPO_DIR/frontend/validator.html"
-if [[ -f "$HTML" && -n "$METRICS_URL" ]]; then
-    _escaped_url="${METRICS_URL//&/\\&}"
-    sed -i "s|const METRICS_URL = .*;.*|const METRICS_URL = '$_escaped_url'; // set by setup.sh|" "$HTML"
-    echo "Patched METRICS_URL in: $HTML"
+# Write the dashboard's METRICS_URL to a git-ignored config.js, never into the
+# tracked validator.html (patching that left the checkout dirty and blocked
+# `git pull`). JSON-encode the URL so quotes or backslashes can't break the JS.
+FRONTEND_CONFIG="$REPO_DIR/frontend/config.js"
+if [[ -n "$METRICS_URL" ]]; then
+    printf 'window.METRICS_URL = %s;\n' \
+        "$(python3 -c 'import json, sys; print(json.dumps(sys.argv[1]))' "$METRICS_URL")" \
+        > "$FRONTEND_CONFIG"
+    echo "Wrote METRICS_URL to: $FRONTEND_CONFIG"
 fi
 
 # Install system config (requires sudo)
