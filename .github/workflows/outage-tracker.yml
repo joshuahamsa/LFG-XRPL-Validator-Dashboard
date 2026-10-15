@@ -1,68 +1,87 @@
-# Opens a GitHub issue when Healthchecks.io reports the validator down and
-# closes it (with duration) when it recovers. Fired by a Healthchecks.io
-# webhook calling the repository_dispatch API — see alerting/README.md.
+# Closes outage issues once the validator has recovered.
+#
+# Healthchecks.io's native GitHub integration OPENS an issue (label `outage`)
+# each time the check goes down, but never closes it. This workflow polls the
+# Healthchecks.io API with a read-only key, and for each open outage issue
+# looks for the up-flip that followed its down-flip. If there is one, it
+# comments with exact times + duration and closes the issue. See
+# alerting/README.md.
+#
+# Note: GitHub disables scheduled workflows on public repos after 60 days with
+# no commits. If outage issues stop auto-closing, re-enable it in the Actions tab.
 name: Outage tracker
 
 on:
-  repository_dispatch:
-    types: [validator-down, validator-up]
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
 
 permissions:
   issues: write
 
-# Down and up events for one outage must never race each other.
 concurrency:
   group: outage-tracker
   cancel-in-progress: false
 
 jobs:
-  track:
+  close-recovered:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/github-script@v7
+        env:
+          HC_API_KEY: ${{ secrets.HC_API_KEY_READONLY }}
+          HC_CHECK_ID: ${{ secrets.HC_CHECK_ID }}
         with:
           script: |
             const LABEL = 'outage';
-            const p = context.payload.client_payload || {};
-            const at = p.at || new Date().toISOString();
-            const check = p.check || 'validator';
-            const reason = (p.reason || '').trim()
-              || 'No check-ins received: WAN, power, or host down (or the healthcheck timer stopped).';
+            // The issue is created a few seconds after the down-flip; allow slack
+            // for Healthchecks.io notification queueing.
+            const MATCH_SLACK_MS = 10 * 60 * 1000;
             const repo = { owner: context.repo.owner, repo: context.repo.repo };
 
-            try {
-              await github.rest.issues.createLabel({ ...repo, name: LABEL, color: 'b60205',
-                description: 'Validator outage reported by Healthchecks.io' });
-            } catch (e) { if (e.status !== 422) throw e; } // 422 = already exists
+            const open = await github.paginate(github.rest.issues.listForRepo,
+              { ...repo, labels: LABEL, state: 'open', per_page: 100 });
+            if (!open.length) { core.info('No open outage issues.'); return; }
 
-            const open = (await github.rest.issues.listForRepo({
-              ...repo, labels: LABEL, state: 'open', per_page: 1,
-              sort: 'created', direction: 'desc' })).data[0];
-
-            if (context.payload.action === 'validator-down') {
-              if (open) {
-                // Healthchecks flipped down again before an up arrived; keep one issue.
-                await github.rest.issues.createComment({ ...repo, issue_number: open.number,
-                  body: `Still down / down again at **${at}**.\n\n> ${reason}` });
-                return;
-              }
-              await github.rest.issues.create({ ...repo, labels: [LABEL],
-                title: `Validator outage — ${at.slice(0, 16).replace('T', ' ')} UTC`,
-                body: [
-                  `**Check:** ${check}`,
-                  `**Down since:** ${at}`,
-                  `**Reason:** ${reason}`,
-                  '',
-                  'Opened automatically by Healthchecks.io; closes itself on recovery.',
-                ].join('\n') });
+            const { HC_API_KEY, HC_CHECK_ID } = process.env;
+            if (!HC_API_KEY || !HC_CHECK_ID) {
+              core.setFailed('Set repo secrets HC_API_KEY_READONLY and HC_CHECK_ID.');
               return;
             }
+            const oldest = Math.min(...open.map(i => Date.parse(i.created_at)));
+            // The flips API wants Unix seconds, not ISO dates.
+            const start = Math.floor((oldest - 24 * 3600 * 1000) / 1000);
+            const res = await fetch(
+              `https://healthchecks.io/api/v3/checks/${HC_CHECK_ID}/flips/?start=${start}`,
+              { headers: { 'X-Api-Key': HC_API_KEY } });
+            if (!res.ok) { core.setFailed(`Healthchecks.io API returned ${res.status}`); return; }
+            const flips = (await res.json()).flips
+              .map(f => ({ t: Date.parse(f.timestamp), up: f.up === 1 }))
+              .sort((a, b) => a.t - b.t);
 
-            // validator-up
-            if (!open) { core.notice(`Recovery at ${at} with no open outage issue.`); return; }
-            const mins = Math.max(0, Math.round((Date.parse(at) - Date.parse(open.created_at)) / 60000));
-            const dur = mins >= 60 ? `${Math.floor(mins / 60)}h ${mins % 60}m` : `${mins}m`;
-            await github.rest.issues.createComment({ ...repo, issue_number: open.number,
-              body: `✅ Recovered at **${at}** — down for about **${dur}** (measured from first alert, so add the grace period).` });
-            await github.rest.issues.update({ ...repo, issue_number: open.number,
-              state: 'closed', state_reason: 'completed' });
+            const fmt = ms => new Date(ms).toISOString().replace('.000Z', 'Z');
+            const dur = ms => {
+              const m = Math.round(ms / 60000);
+              return m >= 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${m}m`;
+            };
+
+            for (const issue of open) {
+              const created = Date.parse(issue.created_at);
+              const down = flips.filter(f => !f.up && f.t <= created + MATCH_SLACK_MS).pop();
+              if (!down) { core.warning(`#${issue.number}: no matching down-flip`); continue; }
+              const up = flips.find(f => f.up && f.t > down.t);
+              if (!up) { core.info(`#${issue.number}: still down since ${fmt(down.t)}`); continue; }
+
+              await github.rest.issues.createComment({ ...repo, issue_number: issue.number, body: [
+                `✅ **Recovered.** Down for **${dur(up.t - down.t)}**.`,
+                '',
+                `| | UTC |`, `|---|---|`,
+                `| Went down | ${fmt(down.t)} |`,
+                `| Back up | ${fmt(up.t)} |`,
+                '',
+                'For a silent outage (no check-ins at all), "went down" is when the grace period ran out; the real loss of connectivity was up to ~6 minutes earlier.',
+              ].join('\n') });
+              await github.rest.issues.update({ ...repo, issue_number: issue.number,
+                state: 'closed', state_reason: 'completed' });
+              core.info(`#${issue.number}: closed (${dur(up.t - down.t)})`);
+            }

@@ -9,7 +9,7 @@ stop or report a failure.
  validator (every 60s)            healthchecks.io               you
  ┌──────────────────┐  ping      ┌─────────────────┐  email    ┌─────────────┐
  │ healthcheck.py   │ ─────────▶ │ silent > grace? │ ────────▶ │ inbox       │
- │ admin RPC :5006  │ /fail+why  │ or /fail?       │  webhook  │ GitHub issue│
+ │ admin RPC :5006  │ /fail+why  │ or /fail?       │  GitHub   │ GitHub issue│
  └──────────────────┘            └─────────────────┘ ────────▶ │ (auto-close)│
                                                                 └─────────────┘
 ```
@@ -44,39 +44,31 @@ The URL is stored in `/etc/validator-node/healthcheck.env` (mode 600). Treat it
 as a credential, since anyone holding it can send fake check-ins. Logs:
 `journalctl -u validator-healthcheck`.
 
-### 3. GitHub issue tracking (webhook → `repository_dispatch`)
+### 3. GitHub issue tracking
 
-`.github/workflows/outage-tracker.yml` opens an `outage` issue on down and
-comments + closes it on recovery. Healthchecks.io triggers it via the GitHub API.
+Opening and closing are handled by two different pieces:
 
-1. Create a **fine-grained PAT**: only this repository, permission
-   **Contents: Read and write** (required by the dispatch endpoint), nothing else.
-   It lives only in Healthchecks.io.
-2. In Healthchecks.io: Integrations → **Webhook**, then attach it to the check.
+- **Opening:** Healthchecks.io's native **GitHub** integration (Integrations →
+  GitHub, installed as a GitHub App on this repo only, so no personal token).
+  Set its label to **`outage`**. It opens a "<check> is DOWN" issue on every
+  down event, with the last ping's body (the `/fail` reason) included. It never
+  closes issues.
+- **Closing:** `.github/workflows/outage-tracker.yml` runs every 15 minutes
+  (and on demand from the Actions tab). When an `outage` issue is open, it
+  reads the check's flip history from the Healthchecks.io API. For each issue
+  it finds the down-flip it was opened for and the next up-flip, then comments
+  the exact times + duration and closes it. With no open issues it doesn't
+  call Healthchecks.io at all.
 
-   | | Execute when check goes **down** | Execute when check goes **up** |
-   |---|---|---|
-   | Method | `POST` | `POST` |
-   | URL | `https://api.github.com/repos/joshuahamsa/LFG-XRPL-Validator-Dashboard/dispatches` | same |
-   | Body | see below | see below |
-   | Headers | see below | same |
+Repo secrets (Settings → Secrets and variables → Actions):
 
-   Down body:
-   ```json
-   {"event_type": "validator-down", "client_payload": {"check": $NAME_JSON, "at": "$NOW", "reason": $BODY_JSON}}
-   ```
-   Up body:
-   ```json
-   {"event_type": "validator-up", "client_payload": {"check": $NAME_JSON, "at": "$NOW"}}
-   ```
-   Headers (both):
-   ```
-   Authorization: Bearer <PAT>
-   Accept: application/vnd.github+json
-   X-GitHub-Api-Version: 2022-11-28
-   ```
-   `$BODY_JSON` is the last ping's body, i.e. the `/fail` reason. For a silent
-   outage (WAN down) it is empty and the workflow fills in "No check-ins received".
+| Secret | Value |
+|---|---|
+| `HC_API_KEY_READONLY` | Healthchecks.io → project Settings → API Access → **read-only** key. It can't change checks or send pings. |
+| `HC_CHECK_ID` | The check's UUID (the part after `hc-ping.com/`). Stored as a secret because it doubles as the ping URL. |
+
+GitHub disables scheduled workflows on public repos after **60 days without
+commits**. If issues stop auto-closing, re-enable the workflow in the Actions tab.
 
 **This repo is public, so outage issues are public.** `healthcheck.py` keeps
 reasons generic (no IPs, hostnames, or keys) for that reason.
@@ -87,6 +79,6 @@ reasons generic (no IPs, hostnames, or keys) for that reason.
 python3 -m unittest -v alerting/test_healthcheck.py
 ```
 
-End to end: use Healthchecks.io's **Send test notification** on the webhook,
+End to end: use **Send test notification** on the GitHub integration (opens a test issue),
 or temporarily point `XRPLD_ADMIN_RPC` at a dead port in the service and run
 `sudo systemctl start validator-healthcheck`.
