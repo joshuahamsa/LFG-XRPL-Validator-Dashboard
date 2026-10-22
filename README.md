@@ -157,6 +157,7 @@ motd/
 └── cron-install.sh         # Deploy cron job + MOTD hook
 
 frontend/
-├── validator.html          # Browser dashboard — update METRICS_URL to your Tailscale Funnel URL
+├── validator.html          # Browser dashboard — reads METRICS_URL from config.js
+├── config.js               # (git-ignored) written by motd/setup.sh: window.METRICS_URL = '…'
 └── styles.css              # Shared stylesheet
 ```
