@@ -154,9 +154,9 @@ while IFS= read -r line; do
         [[ ${#stripped} -eq 80 ]] \
             && ok "CPU W row: width 80" \
             || fail "CPU W row: width 80" "${#stripped}" "80"
-        [[ "$stripped" =~ "12.3W" ]] \
+        [[ "$stripped" =~ "12.3 W" ]] \
             && ok "CPU W row: value present" \
-            || fail "CPU W row: value present" "$stripped" "contains 12.3W"
+            || fail "CPU W row: value present" "$stripped" "contains 12.3 W"
         cpuw_ok=true; break
     fi
 done < <(print_columns)
@@ -401,6 +401,12 @@ UPS_STATUS="OB LB"
 l=$(find_line "LOW BATTERY") && ok "power: low battery label" || fail "power: low battery label" "" "LOW BATTERY"
 UPS_STATUS="OL CHRG"
 
+# Uptime appears once per meaning: xrpld "Uptime" (validator), host "Host up" (power)
+up_rows=$(print_columns | sed 's/\x1b\[[0-9;]*m//g' | grep -cE '║    (Up|Uptime|Host up) ')
+[[ "$up_rows" -eq 2 ]] && ok "uptime: one xrpld + one host row" || fail "uptime: one xrpld + one host row" "$up_rows" "2"
+l=$(find_line "Disconnects"); [[ "${l:0:39}" == *"Disconnects"* ]] \
+    && ok "peers: disconnects in left column" || fail "peers: disconnects in left column" "$l" "left"
+
 # Divider joints: both dividers present, each meets the middle border correctly
 mapfile -t col_lines < <(print_columns)
 joints=""
@@ -412,7 +418,10 @@ done
 
 # No UPS: no POWER section, widths still 80
 reset_ups
-! find_line "◈ POWER" >/dev/null && ok "power section: hidden without NUT" || fail "power section: hidden without NUT" "" "no POWER"
+! find_line "Batt " >/dev/null && ! find_line "ON MAINS" >/dev/null \
+    && ok "power: UPS rows hidden without NUT" || fail "power: UPS rows hidden without NUT" "" "no Batt/State rows"
+l=$(find_line "Host up") && [[ "${l:40}" == *"Host up"* ]] \
+    && ok "power: host uptime kept without NUT" || fail "power: host uptime kept without NUT" "$l" "Host up in right column"
 col_widths_ok && ok "columns: all rows width 80 (no UPS)" || fail "columns: all rows width 80 (no UPS)" "bad width" "80"
 
 # Amendment-blocked state still fits

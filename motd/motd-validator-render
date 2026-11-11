@@ -392,16 +392,16 @@ _lrow() {
     printf '    %-12s%s%s%s' "$label" "$color" "$(rpad "$val" $(( LEFT_COL - 16 )))" "$RESET"
 }
 
-# Right data row with bar: 10-char label + 10-char bar + 2 + value (17 visible)
+# Right data row with bar: 12-char label + 10-char bar + 2 + value (15 visible)
 _rbar() {
     local label="$1" bar="$2" val="$3" color="${4:-$GREEN}"
-    printf '    %-6s%s  %s%s%s' "$label" "$bar" "$color" "$(rpad "$val" $(( RIGHT_COL - 22 )))" "$RESET"
+    printf '    %-8s%s  %s%s%s' "$label" "$bar" "$color" "$(rpad "$val" $(( RIGHT_COL - 24 )))" "$RESET"
 }
 
-# Right data row without bar: 10-char label + value (29 visible)
+# Right data row without bar: 12-char label + value (27 visible)
 _rrow() {
     local label="$1" val="$2" color="${3:-$GREEN}"
-    printf '    %-6s%s%s%s' "$label" "$color" "$(rpad "$val" $(( RIGHT_COL - 10 )))" "$RESET"
+    printf '    %-8s%s%s%s' "$label" "$color" "$(rpad "$val" $(( RIGHT_COL - 12 )))" "$RESET"
 }
 
 # 10-char bar for "higher is better" values (battery charge): green ≥50, orange ≥20, red below.
@@ -450,18 +450,6 @@ build_validator_section() {
     (( $(awk "BEGIN{print ($load_num > 20) ? 1 : 0}") )) && load_color="$RED"
     _lcell "$(_lrow Load "${RPC_LOAD}x" "$load_color")"
 
-    local peer_color="$GREEN" peer_num
-    peer_num=$(printf '%s' "$RPC_PEERS" | grep -oP '^[0-9]+' || echo "0")
-    (( peer_num < 4  )) && peer_color="$ORANGE"
-    (( peer_num == 0 )) && peer_color="$RED"
-    _lcell "$(_lrow Peers "${RPC_PEERS} connected" "$peer_color")"
-
-    local disc_color="$GREEN" disc_num
-    disc_num=$(printf '%s' "$RPC_PEER_DISC" | grep -oP '^[0-9]+' || echo "0")
-    (( disc_num > 10 )) && disc_color="$ORANGE"
-    (( disc_num > 50 )) && disc_color="$RED"
-    _lcell "$(_lrow Disconnects "$RPC_PEER_DISC" "$disc_color")"
-
     local node_uptime="—"
     [[ "$RPC_UPTIME_S" =~ ^[0-9]+$ ]] && node_uptime=$(format_uptime "$RPC_UPTIME_S")
     _lcell "$(_lrow Uptime "$node_uptime")"
@@ -477,6 +465,18 @@ build_network_section() {
     local p2p_color="$GREEN" p2p_sym="✓"
     [[ "$NET_P2P_STATUS" != "OPEN" ]] && { p2p_color="$RED"; p2p_sym="✗"; }
     _lcell "$(_lrow "P2P :51235" "${p2p_sym} ${NET_P2P_STATUS}" "$p2p_color")"
+
+    local peer_color="$GREEN" peer_num
+    peer_num=$(printf '%s' "$RPC_PEERS" | grep -oP '^[0-9]+' || echo "0")
+    (( peer_num < 4  )) && peer_color="$ORANGE"
+    (( peer_num == 0 )) && peer_color="$RED"
+    _lcell "$(_lrow Peers "${RPC_PEERS} connected" "$peer_color")"
+
+    local disc_color="$GREEN" disc_num
+    disc_num=$(printf '%s' "$RPC_PEER_DISC" | grep -oP '^[0-9]+' || echo "0")
+    (( disc_num > 10 )) && disc_color="$ORANGE"
+    (( disc_num > 50 )) && disc_color="$RED"
+    _lcell "$(_lrow Disconnects "$RPC_PEER_DISC" "$disc_color")"
 }
 
 build_system_section() {
@@ -484,21 +484,26 @@ build_system_section() {
     _rcell "$(_rbar CPU  "$(progress_bar "$SYS_CPU_PCT")"  "${SYS_CPU_PCT}%")"
     _rcell "$(_rbar RAM  "$(progress_bar "$SYS_RAM_PCT")"  "${SYS_RAM_USED_GB} / ${SYS_RAM_TOTAL_GB} GB")"
     _rcell "$(_rbar Disk "$(progress_bar "$SYS_DISK_PCT")" "${SYS_DISK_USED} / ${SYS_DISK_TOTAL}")"
-    _rcell "$(_rrow Up "$SYS_UPTIME")"
     if [[ -n "$SYS_CPU_TEMP_C" ]]; then
         local temp_color="$GREEN"
         (( SYS_CPU_TEMP_C >= 60 )) && temp_color="$ORANGE"
         (( SYS_CPU_TEMP_C >= 80 )) && temp_color="$RED"
         _rcell "$(_rrow Temp "${SYS_CPU_TEMP_C}°C" "$temp_color")"
     fi
-    [[ -n "$SYS_CPU_W" ]] && _rcell "$(_rrow "CPU W" "${SYS_CPU_W}W" "$CANVAS")"
     return 0
 }
 
+# POWER: UPS rows (only when NUT reports a UPS), then host uptime and CPU package power.
 build_power_section() {
-    [[ -n "$UPS_STATUS" ]] || return 0
     _rcell "$_COL_DIV"
     _rcell "$(_header_cell POWER $RIGHT_COL)"
+    [[ -n "$UPS_STATUS" ]] && build_ups_rows
+    _rcell "$(_rrow "Host up" "$SYS_UPTIME")"
+    [[ -n "$SYS_CPU_W" ]] && _rcell "$(_rrow "CPU W" "${SYS_CPU_W} W" "$CANVAS")"
+    return 0
+}
+
+build_ups_rows() {
 
     local label="ON MAINS" color="$GREEN"
     case " $UPS_STATUS " in
