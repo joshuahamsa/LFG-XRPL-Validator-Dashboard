@@ -364,7 +364,7 @@ echo "=== UPS (NUT) row ==="
 reset_ups() { UPS_STATUS=""; UPS_CHARGE=""; UPS_RUNTIME_S=""; UPS_LOAD=""; UPS_NOMINAL_W=""; }
 
 reset_ups
-parse_ups $'Init SSL without certificate database\nbattery.charge: 98\nbattery.runtime: 4452\nups.load: 10\nups.realpower.nominal: 810\nups.status: OL CHRG\ndevice.serial: 5B2349TC3061  '
+parse_ups $'Init SSL without certificate database\nbattery.charge: 98\nbattery.runtime: 4452\nups.load: 10\nups.realpower.nominal: 810\nups.status: OL CHRG\ndevice.serial: XX0000TEST00  '
 [[ "$UPS_STATUS" == "OL CHRG" ]] && ok "parse_ups: status" || fail "parse_ups: status" "$UPS_STATUS" "OL CHRG"
 [[ "$UPS_CHARGE" == "98" ]]      && ok "parse_ups: charge" || fail "parse_ups: charge" "$UPS_CHARGE" "98"
 [[ "$UPS_RUNTIME_S" == "4452" ]] && ok "parse_ups: runtime" || fail "parse_ups: runtime" "$UPS_RUNTIME_S" "4452"

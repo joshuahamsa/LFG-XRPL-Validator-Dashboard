@@ -11,7 +11,7 @@ UPSC_OUTPUT = """\
 battery.charge: 98
 battery.runtime: 4452
 battery.voltage: 27.4
-device.serial: 5B2349TC3061
+device.serial: XX0000TEST00
 ups.load: 8
 ups.status: OL CHRG
 """
@@ -28,7 +28,7 @@ class ParseTests(unittest.TestCase):
         d = ups_check.parse_upsc(UPSC_OUTPUT)
         self.assertEqual(d["ups.status"], "OL CHRG")
         self.assertEqual(d["battery.runtime"], "4452")
-        self.assertEqual(d["device.serial"], "5B2349TC3061")
+        self.assertEqual(d["device.serial"], "XX0000TEST00")
 
     def test_ignores_noise_lines(self):
         d = ups_check.parse_upsc("Init SSL without certificate database\nups.status: OL\n")
