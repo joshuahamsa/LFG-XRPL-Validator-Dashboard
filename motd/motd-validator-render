@@ -113,6 +113,17 @@ format_uptime() {
     printf '%dd %02dh %02dm' "$d" "$h" "$m"
 }
 
+# Compact duration: "41m", "4h 41m", "3d 04h".
+format_short_dur() {
+    local secs="${1:-0}"
+    [[ "$secs" =~ ^[0-9]+$ ]] || { printf '—'; return; }
+    local d=$(( secs / 86400 )) h=$(( (secs % 86400) / 3600 )) m=$(( (secs % 3600) / 60 ))
+    if   (( d > 0 )); then printf '%dd %02dh' "$d" "$h"
+    elif (( h > 0 )); then printf '%dh %02dm' "$h" "$m"
+    else                   printf '%dm' "$m"
+    fi
+}
+
 # ── Pre-built border strings (computed once at source time) ───────────────────
 _hline() { local n="$1" s=""; for (( i=0; i<n; i++ )); do s+="═"; done; printf '%s' "$s"; }
 
@@ -204,6 +215,10 @@ RPC_PEER_DISC="—"
 RPC_UPTIME_S="0"
 RPC_AMENDMENT_BLOCKED="false"
 RPC_VERSION="—"
+RPC_SYNC_PCT=""      # % of xrpld uptime in FULL (incl. proposing)
+RPC_DROPOUTS=""      # times this node lost the network since xrpld start (boot excluded)
+RPC_STATE_DUR_S=""   # seconds in the current server state
+RPC_CHURN_DAY=""     # peer connections closed per day (either side)
 
 # System globals
 SYS_CPU_PCT=0
@@ -277,6 +292,17 @@ collect_data() {
         RPC_PEER_DISC=$(printf '%s' "$rpc_json" | jq -r '.result.info.peer_disconnects // "—"')
         RPC_UPTIME_S=$(printf '%s' "$rpc_json" | jq -r '.result.info.uptime          // "0"')
         RPC_VERSION=$(printf '%s' "$rpc_json"  | jq -r '.result.info.build_version   // "—"')
+        # Stability: state_accounting seeds disconnected.transitions with 1 for boot.
+        IFS='|' read -r RPC_SYNC_PCT RPC_DROPOUTS RPC_STATE_DUR_S RPC_CHURN_DAY < <(
+            printf '%s' "$rpc_json" | jq -r '
+                .result.info as $i | ($i.state_accounting // {}) as $a
+                | ([$a[]? | .duration_us | tonumber] | add // 0) as $t
+                | [ (if $t > 0 then ((($a.full.duration_us // "0") | tonumber) * 10000 / $t | round) / 100 else "" end),
+                    (if $a.disconnected then ([($a.disconnected.transitions | tonumber) - 1, 0] | max) else "" end),
+                    ((($i.server_state_duration_us // "0") | tonumber) / 1000000 | floor),
+                    (if ($i.uptime // 0) > 0 then (($i.peer_disconnects // "0" | tonumber) * 86400 / $i.uptime | round) else "" end)
+                  ] | map(tostring) | join("|")' 2>/dev/null
+        ) || true
         local ab
         ab=$(printf '%s' "$rpc_json" | jq -r '.result.info.amendment_blocked // false')
         RPC_AMENDMENT_BLOCKED="$ab"
@@ -454,6 +480,19 @@ build_validator_section() {
     [[ "$RPC_UPTIME_S" =~ ^[0-9]+$ ]] && node_uptime=$(format_uptime "$RPC_UPTIME_S")
     _lcell "$(_lrow Uptime "$node_uptime")"
     _lcell "$(_lrow Version "$RPC_VERSION")"
+
+    # In sync: share of xrpld uptime spent FULL/proposing, plus time in current state
+    if [[ -n "$RPC_SYNC_PCT" ]]; then
+        local sync_color="$GREEN"
+        (( $(awk "BEGIN{print ($RPC_SYNC_PCT < 99) ? 1 : 0}") )) && sync_color="$RED"
+        _lcell "$(_lrow "In sync" "${RPC_SYNC_PCT}% · $(format_short_dur "$RPC_STATE_DUR_S")" "$sync_color")"
+    fi
+    # Dropouts: times THIS node lost the network (not peer churn)
+    if [[ "$RPC_DROPOUTS" =~ ^[0-9]+$ ]]; then
+        local drop_color="$GREEN"
+        (( RPC_DROPOUTS > 0 )) && drop_color="$ORANGE"
+        _lcell "$(_lrow Dropouts "${RPC_DROPOUTS} since xrpld start" "$drop_color")"
+    fi
 }
 
 build_network_section() {
@@ -472,11 +511,10 @@ build_network_section() {
     (( peer_num == 0 )) && peer_color="$RED"
     _lcell "$(_lrow Peers "${RPC_PEERS} connected" "$peer_color")"
 
-    local disc_color="$GREEN" disc_num
-    disc_num=$(printf '%s' "$RPC_PEER_DISC" | grep -oP '^[0-9]+' || echo "0")
-    (( disc_num > 10 )) && disc_color="$ORANGE"
-    (( disc_num > 50 )) && disc_color="$RED"
-    _lcell "$(_lrow Disconnects "$RPC_PEER_DISC" "$disc_color")"
+    # Peer churn: closed peer connections per day, either side. Normal background noise.
+    if [[ -n "$RPC_CHURN_DAY" ]]; then
+        _lcell "$(_lrow "Peer churn" "~${RPC_CHURN_DAY}/day" "$DIM")"
+    fi
 }
 
 build_system_section() {

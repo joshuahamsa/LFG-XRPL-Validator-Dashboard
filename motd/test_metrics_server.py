@@ -88,6 +88,43 @@ class TestHTTPIntegration(unittest.TestCase):
         self.assertEqual(ctx.exception.code, 404)
 
 
+class TestStabilityMetrics(unittest.TestCase):
+    INFO = {
+        "uptime": 86400 * 2,
+        "peer_disconnects": "44",
+        "server_state_duration_us": "16909260480",
+        "state_accounting": {
+            "connected":    {"duration_us": "351857517",     "transitions": "7"},
+            "disconnected": {"duration_us": "62270618",      "transitions": "2"},
+            "full":         {"duration_us": "1699156589880", "transitions": "48"},
+            "syncing":      {"duration_us": "254267368",     "transitions": "47"},
+            "tracking":     {"duration_us": "32545894",      "transitions": "50"},
+        },
+    }
+
+    def test_values(self):
+        m = metrics_server.stability_metrics(self.INFO)
+        self.assertEqual(m["sync_pct"], 99.96)
+        self.assertEqual(m["dropouts"], 1)  # boot entry not counted
+        self.assertEqual(m["state_duration_s"], 16909)
+        self.assertEqual(m["peer_churn_per_day"], 22.0)
+
+    def test_fresh_boot_has_no_dropouts(self):
+        info = {"uptime": 30, "state_accounting": {
+            "disconnected": {"duration_us": "5000000", "transitions": "1"},
+            "full": {"duration_us": "25000000", "transitions": "1"}}}
+        m = metrics_server.stability_metrics(info)
+        self.assertEqual(m["dropouts"], 0)
+        self.assertEqual(m["sync_pct"], 83.33)
+
+    def test_missing_accounting(self):
+        m = metrics_server.stability_metrics({})
+        self.assertIsNone(m["sync_pct"])
+        self.assertIsNone(m["dropouts"])
+        self.assertIsNone(m["peer_churn_per_day"])
+        self.assertEqual(m["state_duration_s"], 0)
+
+
 class TestGetValidatorInfo(unittest.TestCase):
     RIPPLED_JSON = json.dumps({
         "result": {
