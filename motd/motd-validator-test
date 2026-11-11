@@ -121,10 +121,10 @@ while IFS= read -r line; do
             break
         fi
     fi
-done < <(print_validator_system)
+done < <(print_columns)
 
 echo ""
-echo "=== print_validator_system CPU temp/power rows ==="
+echo "=== print_columns CPU temp/power rows ==="
 
 # Set up system data with temp and power
 SYS_CPU_TEMP_C=55
@@ -143,7 +143,7 @@ while IFS= read -r line; do
             || fail "CPU temp row: value present" "$stripped" "contains 55°C"
         temp_ok=true; break
     fi
-done < <(print_validator_system)
+done < <(print_columns)
 $temp_ok || fail "CPU temp row: found" "" "row with Temp + °C"
 
 # CPU W row should be 80 visible chars
@@ -159,7 +159,7 @@ while IFS= read -r line; do
             || fail "CPU W row: value present" "$stripped" "contains 12.3W"
         cpuw_ok=true; break
     fi
-done < <(print_validator_system)
+done < <(print_columns)
 $cpuw_ok || fail "CPU W row: found" "" "row with CPU W"
 
 # Null temp: no Temp row should appear
@@ -171,7 +171,7 @@ while IFS= read -r line; do
     if [[ "$stripped" =~ "Temp" && "$stripped" =~ "°C" ]]; then
         temp_absent=false; break
     fi
-done < <(print_validator_system)
+done < <(print_columns)
 $temp_absent \
     && ok "CPU temp row: absent when empty" \
     || fail "CPU temp row: absent when empty" "" "no Temp row"
@@ -369,32 +369,56 @@ parse_ups $'Init SSL without certificate database\nbattery.charge: 98\nbattery.r
 [[ "$UPS_CHARGE" == "98" ]]      && ok "parse_ups: charge" || fail "parse_ups: charge" "$UPS_CHARGE" "98"
 [[ "$UPS_RUNTIME_S" == "4452" ]] && ok "parse_ups: runtime" || fail "parse_ups: runtime" "$UPS_RUNTIME_S" "4452"
 
-format_ups
-[[ "$UPS_LEFT_VAL" == "MAINS 98% · 74m left" ]] \
-    && ok "format_ups: on mains" || fail "format_ups: on mains" "$UPS_LEFT_VAL" "MAINS 98% · 74m left"
-[[ "$UPS_RIGHT_VAL" == "10% · ~81 W" ]] \
-    && ok "format_ups: load watts" || fail "format_ups: load watts" "$UPS_RIGHT_VAL" "10% · ~81 W"
-[[ "$UPS_COLOR" == "$GREEN" ]] && ok "format_ups: mains is green" || fail "format_ups: mains is green" "$UPS_COLOR" "GREEN"
+# ── Column layout ──
+col_widths_ok() {  # every line of print_columns is 80 visible chars
+    local line bad=0
+    while IFS= read -r line; do
+        line=$(strip_ansi "$line"); (( ${#line} == 80 )) || bad=1
+    done < <(print_columns)
+    return $bad
+}
+find_line() { local line; while IFS= read -r line; do line=$(strip_ansi "$line"); [[ "$line" == *$1* ]] && { printf '%s' "$line"; return 0; }; done < <(print_columns); return 1; }
 
-UPS_STATUS="OB DISCHRG"; format_ups
-[[ "$UPS_LEFT_VAL" == BATTERY* && "$UPS_COLOR" == "$ORANGE" ]] \
-    && ok "format_ups: on battery orange" || fail "format_ups: on battery orange" "$UPS_LEFT_VAL" "BATTERY…"
-UPS_STATUS="OB LB"; format_ups
-[[ "$UPS_LEFT_VAL" == "LOW BATT"* && "$UPS_COLOR" == "$RED" ]] \
-    && ok "format_ups: low battery red" || fail "format_ups: low battery red" "$UPS_LEFT_VAL" "LOW BATT…"
+col_widths_ok && ok "columns: all rows width 80 (with UPS)" || fail "columns: all rows width 80 (with UPS)" "bad width" "80"
 
-# Row width: the power row must keep the box at exactly 80 visible chars
+l=$(find_line "◈ POWER") && [[ "${l:40}" == *"◈ POWER"* ]] \
+    && ok "power section: right column" || fail "power section: right column" "$l" "POWER in right column"
+l=$(find_line "◈ NETWORK"); [[ "$l" == "║  ◈ NETWORK"* ]] \
+    && ok "network section: left column" || fail "network section: left column" "$l" "║  ◈ NETWORK…"
+l=$(find_line "Peers"); [[ "${l:0:39}" == *"Peers"*"connected"* ]] \
+    && ok "peers: inside validator column" || fail "peers: inside validator column" "$l" "Peers … connected"
+l=$(find_line "ON MAINS") \
+    && [[ "$l" == *"ON MAINS · charging"* ]] \
+    && ok "power: on mains charging" || fail "power: on mains charging" "$l" "ON MAINS · charging"
+l=$(find_line "Left"); [[ "$l" == *"74 min runtime"* ]] \
+    && ok "power: runtime minutes" || fail "power: runtime minutes" "$l" "74 min runtime"
+l=$(find_line "~81 W"); [[ "$l" == *"10% · ~81 W"* ]] \
+    && ok "power: load watts" || fail "power: load watts" "$l" "10% · ~81 W"
+
+UPS_STATUS="OB DISCHRG"
+l=$(find_line "ON BATTERY") && ok "power: on battery label" || fail "power: on battery label" "" "ON BATTERY"
+UPS_STATUS="OB LB"
+l=$(find_line "LOW BATTERY") && ok "power: low battery label" || fail "power: low battery label" "" "LOW BATTERY"
 UPS_STATUS="OL CHRG"
-mapfile -t net_lines < <(print_peers_network)
-last=$(strip_ansi "${net_lines[-1]}")
-[[ ${#last} -eq 80 ]] && ok "power row: width 80" || fail "power row: width 80" "${#last}" "80"
-[[ "$last" == *"Power"*"MAINS 98%"*"UPS load"* ]] \
-    && ok "power row: content" || fail "power row: content" "$last" "Power … MAINS 98% … UPS load"
 
+# Divider joints: both dividers present, each meets the middle border correctly
+mapfile -t col_lines < <(print_columns)
+joints=""
+for line in "${col_lines[@]}"; do
+    s=$(strip_ansi "$line"); joints+="${s:0:1}${s:39:1}${s:79:1} "
+done
+[[ "$joints" == *"╠╣║"* && "$joints" == *"║╠╣"* ]] \
+    && ok "columns: divider joints" || fail "columns: divider joints" "$joints" "contains ╠╣║ and ║╠╣"
+
+# No UPS: no POWER section, widths still 80
 reset_ups
-mapfile -t net_lines < <(print_peers_network)
-[[ "$(strip_ansi "${net_lines[-1]}")" != *"Power"* ]] \
-    && ok "power row: hidden without NUT" || fail "power row: hidden without NUT" "${net_lines[-1]}" "no Power row"
+! find_line "◈ POWER" >/dev/null && ok "power section: hidden without NUT" || fail "power section: hidden without NUT" "" "no POWER"
+col_widths_ok && ok "columns: all rows width 80 (no UPS)" || fail "columns: all rows width 80 (no UPS)" "bad width" "80"
+
+# Amendment-blocked state still fits
+RPC_AMENDMENT_BLOCKED="true"
+col_widths_ok && ok "columns: width 80 when amendment blocked" || fail "columns: width 80 when amendment blocked" "bad" "80"
+RPC_AMENDMENT_BLOCKED="false"
 
 echo ""
 echo "Results: ${PASS} passed, ${FAIL} failed"

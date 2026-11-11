@@ -265,31 +265,6 @@ parse_ups() {
     done <<< "$1"
 }
 
-# Build the UPS row cells. Sets UPS_LEFT_VAL / UPS_RIGHT_VAL (plain) and UPS_COLOR.
-format_ups() {
-    local label="MAINS" color="$GREEN"
-    case " $UPS_STATUS " in
-        *" LB "*)   label="LOW BATT";  color="$RED" ;;
-        *" OB "*)   label="BATTERY";   color="$ORANGE" ;;
-        *" RB "*)   label="REPLACE";   color="$ORANGE" ;;
-        *" OVER "*) label="OVERLOAD";  color="$RED" ;;
-        *" OL "*)   ;;
-        *)          label="${UPS_STATUS:-?}"; color="$RED" ;;
-    esac
-    local val="$label"
-    [[ -n "$UPS_CHARGE" ]] && val+=" ${UPS_CHARGE}%"
-    [[ "$UPS_RUNTIME_S" =~ ^[0-9]+$ ]] && val+=" · $(( UPS_RUNTIME_S / 60 ))m left"
-    UPS_LEFT_VAL="$val"
-    UPS_COLOR="$color"
-
-    local load="—"
-    if [[ "$UPS_LOAD" =~ ^[0-9]+$ ]]; then
-        load="${UPS_LOAD}%"
-        [[ "$UPS_NOMINAL_W" =~ ^[0-9]+$ ]] && load+=" · ~$(( UPS_LOAD * UPS_NOMINAL_W / 100 )) W"
-    fi
-    UPS_RIGHT_VAL="$load"
-}
-
 collect_data() {
     # ── xrpld ──
     local rpc_json
@@ -391,177 +366,197 @@ collect_data() {
     fi
 }
 
-print_validator_system() {
-    # ── Left column: Validator ────────────────────────────────────────────────
-    local state_color="$GREEN"
-    [[ "$RPC_STATE" != "full" ]] && state_color="$RED"
+# ── Two-column body ───────────────────────────────────────────────────────────
+# Left column:  VALIDATOR (incl. peers) over NETWORK.
+# Right column: SYSTEM over POWER (POWER only when NUT reports a UPS).
+# Each column is built as an array of cells (exactly LEFT_COL / RIGHT_COL visible
+# chars) plus divider markers; print_columns zips them, padding the shorter
+# column, and picks the right border joints where a divider meets a content row.
+_COL_DIV=$'\x01DIV'
+LCOL=()
+RCOL=()
 
-    # State bar — full filled green when FULL, else empty red
-    local state_bar
-    if [[ "$RPC_STATE" == "full" ]]; then
-        state_bar=$(printf '%s%s%s' "$GREEN" "▓▓▓▓▓▓▓▓▓▓" "$RESET")
-    else
-        state_bar=$(printf '%s%s%s' "$RED"   "░░░░░░░░░░" "$RESET")
+# Add a cell: $1 = array name, $2 = content (any colors), $3 = visible width of $2's plain text
+# Callers build cells with rpad so they are already exactly column width.
+_lcell() { LCOL+=("$1"); }
+_rcell() { RCOL+=("$1"); }
+
+# Section header cell, e.g. "  ◈ VALIDATOR" padded to width $2
+_header_cell() {
+    rpad "  ${YELLOW}◈ $1${RESET}" $(( $2 + ${#YELLOW} + ${#RESET} ))
+}
+
+# Left data row: 16-char label + value (22 visible), value pre-colored with $3
+_lrow() {
+    local label="$1" val="$2" color="${3:-$GREEN}"
+    printf '    %-12s%s%s%s' "$label" "$color" "$(rpad "$val" $(( LEFT_COL - 16 )))" "$RESET"
+}
+
+# Right data row with bar: 10-char label + 10-char bar + 2 + value (17 visible)
+_rbar() {
+    local label="$1" bar="$2" val="$3" color="${4:-$GREEN}"
+    printf '    %-6s%s  %s%s%s' "$label" "$bar" "$color" "$(rpad "$val" $(( RIGHT_COL - 22 )))" "$RESET"
+}
+
+# Right data row without bar: 10-char label + value (29 visible)
+_rrow() {
+    local label="$1" val="$2" color="${3:-$GREEN}"
+    printf '    %-6s%s%s%s' "$label" "$color" "$(rpad "$val" $(( RIGHT_COL - 10 )))" "$RESET"
+}
+
+# 10-char bar for "higher is better" values (battery charge): green ≥50, orange ≥20, red below.
+charge_bar() {
+    local pct="$1" filled color bar="" i
+    filled=$(( pct * 10 / 100 )); (( filled > 10 )) && filled=10; (( filled < 0 )) && filled=0
+    if   (( pct >= 50 )); then color="$GREEN"
+    elif (( pct >= 20 )); then color="$ORANGE"
+    else                       color="$RED"
     fi
+    for (( i=0; i<filled; i++ )); do bar+="█"; done
+    for (( i=filled; i<10; i++ )); do bar+="░"; done
+    printf '%s%s%s' "$color" "$bar" "$RESET"
+}
 
-    # Load color thresholds
-    local load_color="$GREEN"
-    local load_num
-    load_num=$(printf '%s' "$RPC_LOAD" | grep -oP '^[0-9]+(\.[0-9]+)?' || echo "0")
-    (( $(awk "BEGIN{print ($load_num > 5) ? 1 : 0}") )) && load_color="$ORANGE"
-    (( $(awk "BEGIN{print ($load_num > 20) ? 1 : 0}") )) && load_color="$RED"
+build_validator_section() {
+    _lcell "$(_header_cell VALIDATOR $LEFT_COL)"
 
-    # Ledger age color thresholds
-    local age_color="$GREEN"
-    local age_num
+    # State: bar + label (+ [BLOCKED])
+    local state_color="$GREEN" state_bar
+    if [[ "$RPC_STATE" == "full" || "$RPC_STATE" == "proposing" ]]; then
+        state_bar="${GREEN}▓▓▓▓▓▓▓▓▓▓${RESET}"
+    else
+        state_color="$RED"; state_bar="${RED}░░░░░░░░░░${RESET}"
+    fi
+    local amend_warn="" amend_vis=0
+    if [[ "$RPC_AMENDMENT_BLOCKED" == "true" ]]; then
+        amend_warn=" ${RED}[BLOCKED]${RESET}"; amend_vis=10
+    fi
+    # "    State       "(16) + bar(10) + " "(1) + label + warn = 38
+    _lcell "    State       ${state_bar} ${state_color}$(rpad "${RPC_STATE^^}" $(( LEFT_COL - 27 - amend_vis )))${RESET}${amend_warn}"
+
+    local seq_fmt="$RPC_LEDGER_SEQ"
+    [[ "$RPC_LEDGER_SEQ" =~ ^[0-9]+$ ]] && seq_fmt=$(printf '%d' "$RPC_LEDGER_SEQ" | sed ':a;s/\B[0-9]\{3\}\>/,&/;ta')
+    _lcell "$(_lrow Ledger "$seq_fmt")"
+
+    local age_color="$GREEN" age_num
     age_num=$(printf '%s' "$RPC_LEDGER_AGE" | grep -oP '^[0-9]+' || echo "0")
     (( age_num > 10 )) && age_color="$ORANGE"
     (( age_num > 30 )) && age_color="$RED"
+    _lcell "$(_lrow Age "${RPC_LEDGER_AGE}s" "$age_color")"
 
-    # Format ledger seq with commas
-    local seq_fmt="$RPC_LEDGER_SEQ"
-    if [[ "$RPC_LEDGER_SEQ" =~ ^[0-9]+$ ]]; then
-        seq_fmt=$(printf '%d' "$RPC_LEDGER_SEQ" \
-            | sed ':a;s/\B[0-9]\{3\}\>/,&/;ta')
-    fi
+    local load_color="$GREEN" load_num
+    load_num=$(printf '%s' "$RPC_LOAD" | grep -oP '^[0-9]+(\.[0-9]+)?' || echo "0")
+    (( $(awk "BEGIN{print ($load_num > 5) ? 1 : 0}") )) && load_color="$ORANGE"
+    (( $(awk "BEGIN{print ($load_num > 20) ? 1 : 0}") )) && load_color="$RED"
+    _lcell "$(_lrow Load "${RPC_LOAD}x" "$load_color")"
 
-    # Amendment blocked warning
-    # amend_vis tracks visible chars consumed by the warning (0 or 10: " [BLOCKED]")
-    local amend_warn="" amend_vis=0
-    if [[ "$RPC_AMENDMENT_BLOCKED" == "true" ]]; then
-        amend_warn=" ${RED}[BLOCKED]${RESET}"
-        amend_vis=10
-    fi
+    local peer_color="$GREEN" peer_num
+    peer_num=$(printf '%s' "$RPC_PEERS" | grep -oP '^[0-9]+' || echo "0")
+    (( peer_num < 4  )) && peer_color="$ORANGE"
+    (( peer_num == 0 )) && peer_color="$RED"
+    _lcell "$(_lrow Peers "${RPC_PEERS} connected" "$peer_color")"
 
-    # ── Right column: System ──────────────────────────────────────────────────
-    local cpu_bar ram_bar disk_bar
-    cpu_bar=$(progress_bar "$SYS_CPU_PCT")
-    ram_bar=$(progress_bar "$SYS_RAM_PCT")
-    disk_bar=$(progress_bar "$SYS_DISK_PCT")
+    local disc_color="$GREEN" disc_num
+    disc_num=$(printf '%s' "$RPC_PEER_DISC" | grep -oP '^[0-9]+' || echo "0")
+    (( disc_num > 10 )) && disc_color="$ORANGE"
+    (( disc_num > 50 )) && disc_color="$RED"
+    _lcell "$(_lrow Disconnects "$RPC_PEER_DISC" "$disc_color")"
 
-    # Right column value width: RIGHT_COL(39) - label(10) - bar(10) - gap(2) = 17
-    local rv_width=17
+    local node_uptime="—"
+    [[ "$RPC_UPTIME_S" =~ ^[0-9]+$ ]] && node_uptime=$(format_uptime "$RPC_UPTIME_S")
+    _lcell "$(_lrow Uptime "$node_uptime")"
+    _lcell "$(_lrow Version "$RPC_VERSION")"
+}
 
-    # ── Render rows ───────────────────────────────────────────────────────────
-    # Each left cell = 38 visible chars, each right cell = 39 visible chars.
-    # Label widths are fixed plain-text; colored values fill the remainder.
-    #
-    # State row left:  "    State   " (12) + bar(10) + " " + state_label fills to 38
-    #   state_label visible width = 38 - 12 - 10 - 1 = 15
-    # Other left rows: "    Label   " (12) + value fills to 38
-    #   value visible width = 38 - 12 = 26
-    # Right rows:      "    Label " (10) + bar(10) + "  " + value fills to 39
-    #   value visible width = 39 - 10 - 10 - 2 = 17
+build_network_section() {
+    _lcell "$_COL_DIV"
+    _lcell "$(_header_cell NETWORK $LEFT_COL)"
+    _lcell "$(_lrow LAN "$NET_LAN")"
+    _lcell "$(_lrow Tailscale "${NET_TAILSCALE:-—}")"
+    _lcell "$(_lrow SSH "${NET_SSH_SESSIONS} active")"
+    local p2p_color="$GREEN" p2p_sym="✓"
+    [[ "$NET_P2P_STATUS" != "OPEN" ]] && { p2p_color="$RED"; p2p_sym="✗"; }
+    _lcell "$(_lrow "P2P :51235" "${p2p_sym} ${NET_P2P_STATUS}" "$p2p_color")"
+}
 
-    # state_label_vis: visible chars for state text = 15 total minus amend_vis
-    # visible budget: "    State   "(12) + bar(10) + " "(1) + state_label_vis + amend_vis = 38
-    local state_label_vis=$(( 15 - amend_vis ))
-
-    box_split
-    # Header row
-    box_row2 \
-        "$(rpad "  ${YELLOW}◈ VALIDATOR${RESET}" $(( LEFT_COL + ${#YELLOW} + ${#RESET} )))" \
-        "$(rpad "  ${YELLOW}◈ SYSTEM${RESET}"    $(( RIGHT_COL + ${#YELLOW} + ${#RESET} )))"
-    # State / CPU row
-    box_row2 \
-        "    State   ${state_bar} ${state_color}$(rpad "${RPC_STATE^^}" $state_label_vis)${RESET}${amend_warn}" \
-        "    CPU   ${cpu_bar}  ${GREEN}$(rpad "${SYS_CPU_PCT}%" $rv_width)${RESET}"
-    # Ledger / RAM row
-    box_row2 \
-        "    Ledger  ${GREEN}$(rpad "$seq_fmt" $(( LEFT_COL - 12 )))${RESET}" \
-        "    RAM   ${ram_bar}  ${GREEN}$(rpad "${SYS_RAM_USED_GB} / ${SYS_RAM_TOTAL_GB} GB" $rv_width)${RESET}"
-    # Age / Disk row
-    box_row2 \
-        "    Age     ${age_color}$(rpad "${RPC_LEDGER_AGE}s" $(( LEFT_COL - 12 )))${RESET}" \
-        "    Disk  ${disk_bar}  ${GREEN}$(rpad "${SYS_DISK_USED} / ${SYS_DISK_TOTAL}" $rv_width)${RESET}"
-    # Load / Uptime row
-    box_row2 \
-        "    Load    ${load_color}$(rpad "${RPC_LOAD}x" $(( LEFT_COL - 12 )))${RESET}" \
-        "    Up    ${GREEN}$(rpad "$SYS_UPTIME" $(( RIGHT_COL - 10 )))${RESET}"
+build_system_section() {
+    _rcell "$(_header_cell SYSTEM $RIGHT_COL)"
+    _rcell "$(_rbar CPU  "$(progress_bar "$SYS_CPU_PCT")"  "${SYS_CPU_PCT}%")"
+    _rcell "$(_rbar RAM  "$(progress_bar "$SYS_RAM_PCT")"  "${SYS_RAM_USED_GB} / ${SYS_RAM_TOTAL_GB} GB")"
+    _rcell "$(_rbar Disk "$(progress_bar "$SYS_DISK_PCT")" "${SYS_DISK_USED} / ${SYS_DISK_TOTAL}")"
+    _rcell "$(_rrow Up "$SYS_UPTIME")"
     if [[ -n "$SYS_CPU_TEMP_C" ]]; then
         local temp_color="$GREEN"
         (( SYS_CPU_TEMP_C >= 60 )) && temp_color="$ORANGE"
         (( SYS_CPU_TEMP_C >= 80 )) && temp_color="$RED"
-        box_row2 \
-            "$(rpad "" $LEFT_COL)" \
-            "    Temp  ${temp_color}$(rpad "${SYS_CPU_TEMP_C}°C" $(( RIGHT_COL - 10 )))${RESET}"
+        _rcell "$(_rrow Temp "${SYS_CPU_TEMP_C}°C" "$temp_color")"
     fi
-    if [[ -n "$SYS_CPU_W" ]]; then
-        box_row2 \
-            "$(rpad "" $LEFT_COL)" \
-            "    CPU W ${CANVAS}$(rpad "${SYS_CPU_W}W" $(( RIGHT_COL - 10 )))${RESET}"
+    [[ -n "$SYS_CPU_W" ]] && _rcell "$(_rrow "CPU W" "${SYS_CPU_W}W" "$CANVAS")"
+    return 0
+}
+
+build_power_section() {
+    [[ -n "$UPS_STATUS" ]] || return 0
+    _rcell "$_COL_DIV"
+    _rcell "$(_header_cell POWER $RIGHT_COL)"
+
+    local label="ON MAINS" color="$GREEN"
+    case " $UPS_STATUS " in
+        *" LB "*)   label="LOW BATTERY";      color="$RED" ;;
+        *" OB "*)   label="ON BATTERY";       color="$ORANGE" ;;
+        *" RB "*)   label="REPLACE BATTERY";  color="$ORANGE" ;;
+        *" OVER "*) label="OVERLOAD";         color="$RED" ;;
+        *" OL "*)   [[ " $UPS_STATUS " == *" CHRG "* ]] && label="ON MAINS · charging" ;;
+        *)          label="${UPS_STATUS}";    color="$RED" ;;
+    esac
+    _rcell "$(_rrow State "$label" "$color")"
+
+    if [[ "$UPS_CHARGE" =~ ^[0-9]+$ ]]; then
+        _rcell "$(_rbar Batt "$(charge_bar "$UPS_CHARGE")" "${UPS_CHARGE}%")"
+    fi
+    if [[ "$UPS_RUNTIME_S" =~ ^[0-9]+$ ]]; then
+        local rt_color="$GREEN"
+        (( UPS_RUNTIME_S < 1200 )) && rt_color="$ORANGE"
+        (( UPS_RUNTIME_S < 600 ))  && rt_color="$RED"
+        _rcell "$(_rrow Left "$(( UPS_RUNTIME_S / 60 )) min runtime" "$rt_color")"
+    fi
+    if [[ "$UPS_LOAD" =~ ^[0-9]+$ ]]; then
+        local load="${UPS_LOAD}%"
+        [[ "$UPS_NOMINAL_W" =~ ^[0-9]+$ ]] && load+=" · ~$(( UPS_LOAD * UPS_NOMINAL_W / 100 )) W"
+        _rcell "$(_rbar Load "$(progress_bar "$UPS_LOAD")" "$load")"
     fi
 }
 
-print_peers_network() {
-    local lw=$LEFT_COL rw=$RIGHT_COL  # 38 and 39
+# Zip LCOL and RCOL into box rows, choosing border joints around dividers.
+print_columns() {
+    LCOL=(); RCOL=()
+    build_validator_section
+    build_network_section
+    build_system_section
+    build_power_section
 
-    # Peer count color
-    local peer_color="$GREEN"
-    local peer_num
-    peer_num=$(printf '%s' "$RPC_PEERS" | grep -oP '^[0-9]+' || echo "0")
-    (( peer_num < 4  )) && peer_color="$ORANGE"
-    (( peer_num == 0 )) && peer_color="$RED"
+    local n=${#LCOL[@]} i
+    (( ${#RCOL[@]} > n )) && n=${#RCOL[@]}
+    local blank_l blank_r
+    blank_l=$(rpad "" $LEFT_COL)
+    blank_r=$(rpad "" $RIGHT_COL)
 
-    # P2P port status color
-    local p2p_color="$GREEN" p2p_sym="✓"
-    [[ "$NET_P2P_STATUS" != "OPEN" ]] && { p2p_color="$RED"; p2p_sym="✗"; }
-
-    # Tailscale — show dash if unavailable
-    local ts_val="${NET_TAILSCALE:-—}"
-
-    # xrpld process uptime (RPC_UPTIME_S is seconds as integer from server_info)
-    local node_uptime="—"
-    if [[ "$RPC_UPTIME_S" =~ ^[0-9]+$ ]]; then
-        node_uptime=$(format_uptime "$RPC_UPTIME_S")
-    fi
-
-    # Disconnect count color
-    local disc_color="$GREEN"
-    local disc_num
-    disc_num=$(printf '%s' "$RPC_PEER_DISC" | grep -oP '^[0-9]+' || echo "0")
-    (( disc_num > 10  )) && disc_color="$ORANGE"
-    (( disc_num > 50  )) && disc_color="$RED"
-
-    # Label widths (verified by character count):
-    #   Left headers:    "  ◈ PEERS"      = 9  vis → rpad lw+YELLOW+RESET = 47
-    #   Left data rows:  "    Connected   " / "    Disconnects " / "    Uptime      "
-    #                    each = 16 vis → value fills lw-16 = 22 vis
-    #   Left empty row:  "" padded to lw = 38
-    #
-    #   Right header:    "  ◈ NETWORK"    = 11 vis → rpad rw+YELLOW+RESET = 48
-    #   Right data rows: "    LAN        " / "    Tailscale  " / "    SSH        "
-    #                    each = 15 vis → value fills rw-15 = 24 vis
-    #   Right P2P row:   "    P2P :51235 " = 15 vis + sym(1) + " "(1) → value fills rw-17 = 22 vis
-
-    box_join
-    # Header row
-    box_row2 \
-        "$(rpad "  ${YELLOW}◈ PEERS${RESET}"   $(( lw + ${#YELLOW} + ${#RESET} )))" \
-        "$(rpad "  ${YELLOW}◈ NETWORK${RESET}" $(( rw + ${#YELLOW} + ${#RESET} )))"
-    # Connected / LAN
-    box_row2 \
-        "    Connected   ${peer_color}$(rpad "${RPC_PEERS} peers" $(( lw - 16 )))${RESET}" \
-        "    LAN        ${GREEN}$(rpad "$NET_LAN" $(( rw - 15 )))${RESET}"
-    # Disconnects / Tailscale
-    box_row2 \
-        "    Disconnects ${disc_color}$(rpad "$RPC_PEER_DISC" $(( lw - 16 )))${RESET}" \
-        "    Tailscale  ${GREEN}$(rpad "$ts_val" $(( rw - 15 )))${RESET}"
-    # xrpld uptime / SSH sessions
-    box_row2 \
-        "    Uptime      ${GREEN}$(rpad "$node_uptime" $(( lw - 16 )))${RESET}" \
-        "    SSH        ${GREEN}$(rpad "${NET_SSH_SESSIONS} active" $(( rw - 15 )))${RESET}"
-    # Empty left / P2P status
-    box_row2 \
-        "    Version     ${GREEN}$(rpad "$RPC_VERSION" $(( lw - 16 )))${RESET}" \
-        "    P2P :51235 ${p2p_color}${p2p_sym} $(rpad "$NET_P2P_STATUS" $(( rw - 17 )))${RESET}"
-    # UPS power / load (only when NUT reports a UPS)
-    if [[ -n "$UPS_STATUS" ]]; then
-        format_ups
-        box_row2 \
-            "    Power       ${UPS_COLOR}$(rpad "$UPS_LEFT_VAL" $(( lw - 16 )))${RESET}" \
-            "    UPS load   ${GREEN}$(rpad "$UPS_RIGHT_VAL" $(( rw - 15 )))${RESET}"
-    fi
+    box_split
+    for (( i=0; i<n; i++ )); do
+        local l="${LCOL[i]-$blank_l}" r="${RCOL[i]-$blank_r}"
+        local ld=false rd=false
+        [[ "$l" == "$_COL_DIV" ]] && ld=true
+        [[ "$r" == "$_COL_DIV" ]] && rd=true
+        local lb="║" mid="║" rb="║"
+        if $ld && $rd; then lb="╠"; mid="╬"; rb="╣"
+        elif $ld;      then lb="╠"; mid="╣"
+        elif $rd;      then mid="╠"; rb="╣"
+        fi
+        $ld && l="${BLUE}${_H38}${RESET}"
+        $rd && r="${BLUE}${_H39}${RESET}"
+        printf '%s%s%s%s%s%s%s%s%s%s%s\n' \
+            "$BLUE" "$lb" "$RESET" "$l" "$BLUE" "$mid" "$RESET" "$r" "$BLUE" "$rb" "$RESET"
+    done
 }
 
 print_alerts() {
@@ -701,8 +696,7 @@ main() {
     {
         collect_data
         print_header
-        print_validator_system
-        print_peers_network
+        print_columns
         print_alerts
         print_amendments
         print_identity
