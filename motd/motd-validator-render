@@ -223,6 +223,13 @@ NET_TAILSCALE="—"
 NET_SSH_SESSIONS=0
 NET_P2P_STATUS="CLOSED"
 
+# UPS globals (NUT). UPS_STATUS stays empty when there is no NUT/UPS, which hides the row.
+UPS_STATUS=""
+UPS_CHARGE=""
+UPS_RUNTIME_S=""
+UPS_LOAD=""
+UPS_NOMINAL_W=""
+
 # Alert globals (arrays)
 ALERT_LINES=()
 
@@ -230,6 +237,58 @@ ALERT_LINES=()
 METRICS_JSON='{}'
 AMD_JSON='[]'
 AMD_ERROR=false
+
+# Read the UPS via NUT's upsc. Leaves UPS_STATUS empty if NUT isn't installed or reachable.
+collect_ups() {
+    command -v upsc &>/dev/null || return 0
+    local ups="${UPS_NAME:-}" out
+    if [[ -z "$ups" ]]; then
+        ups=$(timeout 3 upsc -l 2>/dev/null | head -1) || true
+        [[ -n "$ups" ]] || return 0
+        ups="${ups}@localhost"
+    fi
+    out=$(timeout 3 upsc "$ups" 2>/dev/null) || return 0
+    parse_ups "$out"
+}
+
+# Parse `upsc` output (stdin-free: $1 is the text) into the UPS_* globals.
+parse_ups() {
+    local key val
+    while IFS=': ' read -r key val; do
+        case "$key" in
+            ups.status)            UPS_STATUS="$val" ;;
+            battery.charge)        UPS_CHARGE="$val" ;;
+            battery.runtime)       UPS_RUNTIME_S="$val" ;;
+            ups.load)              UPS_LOAD="$val" ;;
+            ups.realpower.nominal) UPS_NOMINAL_W="$val" ;;
+        esac
+    done <<< "$1"
+}
+
+# Build the UPS row cells. Sets UPS_LEFT_VAL / UPS_RIGHT_VAL (plain) and UPS_COLOR.
+format_ups() {
+    local label="MAINS" color="$GREEN"
+    case " $UPS_STATUS " in
+        *" LB "*)   label="LOW BATT";  color="$RED" ;;
+        *" OB "*)   label="BATTERY";   color="$ORANGE" ;;
+        *" RB "*)   label="REPLACE";   color="$ORANGE" ;;
+        *" OVER "*) label="OVERLOAD";  color="$RED" ;;
+        *" OL "*)   ;;
+        *)          label="${UPS_STATUS:-?}"; color="$RED" ;;
+    esac
+    local val="$label"
+    [[ -n "$UPS_CHARGE" ]] && val+=" ${UPS_CHARGE}%"
+    [[ "$UPS_RUNTIME_S" =~ ^[0-9]+$ ]] && val+=" · $(( UPS_RUNTIME_S / 60 ))m left"
+    UPS_LEFT_VAL="$val"
+    UPS_COLOR="$color"
+
+    local load="—"
+    if [[ "$UPS_LOAD" =~ ^[0-9]+$ ]]; then
+        load="${UPS_LOAD}%"
+        [[ "$UPS_NOMINAL_W" =~ ^[0-9]+$ ]] && load+=" · ~$(( UPS_LOAD * UPS_NOMINAL_W / 100 )) W"
+    fi
+    UPS_RIGHT_VAL="$load"
+}
 
 collect_data() {
     # ── xrpld ──
@@ -285,6 +344,9 @@ collect_data() {
     else
         NET_P2P_STATUS="CLOSED"
     fi
+
+    # ── UPS (NUT) — optional; UPS_NAME may be set in validator.conf ──
+    collect_ups
 
     # ── Alerts: last 3 notable xrpld log lines ──
     mapfile -t ALERT_LINES < <(
@@ -493,6 +555,13 @@ print_peers_network() {
     box_row2 \
         "    Version     ${GREEN}$(rpad "$RPC_VERSION" $(( lw - 16 )))${RESET}" \
         "    P2P :51235 ${p2p_color}${p2p_sym} $(rpad "$NET_P2P_STATUS" $(( rw - 17 )))${RESET}"
+    # UPS power / load (only when NUT reports a UPS)
+    if [[ -n "$UPS_STATUS" ]]; then
+        format_ups
+        box_row2 \
+            "    Power       ${UPS_COLOR}$(rpad "$UPS_LEFT_VAL" $(( lw - 16 )))${RESET}" \
+            "    UPS load   ${GREEN}$(rpad "$UPS_RIGHT_VAL" $(( rw - 15 )))${RESET}"
+    fi
 }
 
 print_alerts() {

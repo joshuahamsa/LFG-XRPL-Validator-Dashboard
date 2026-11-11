@@ -359,5 +359,43 @@ for i in "${!_BANNER[@]}"; do
 done
 
 echo ""
+echo "=== UPS (NUT) row ==="
+
+reset_ups() { UPS_STATUS=""; UPS_CHARGE=""; UPS_RUNTIME_S=""; UPS_LOAD=""; UPS_NOMINAL_W=""; }
+
+reset_ups
+parse_ups $'Init SSL without certificate database\nbattery.charge: 98\nbattery.runtime: 4452\nups.load: 10\nups.realpower.nominal: 810\nups.status: OL CHRG\ndevice.serial: XX0000TEST00  '
+[[ "$UPS_STATUS" == "OL CHRG" ]] && ok "parse_ups: status" || fail "parse_ups: status" "$UPS_STATUS" "OL CHRG"
+[[ "$UPS_CHARGE" == "98" ]]      && ok "parse_ups: charge" || fail "parse_ups: charge" "$UPS_CHARGE" "98"
+[[ "$UPS_RUNTIME_S" == "4452" ]] && ok "parse_ups: runtime" || fail "parse_ups: runtime" "$UPS_RUNTIME_S" "4452"
+
+format_ups
+[[ "$UPS_LEFT_VAL" == "MAINS 98% · 74m left" ]] \
+    && ok "format_ups: on mains" || fail "format_ups: on mains" "$UPS_LEFT_VAL" "MAINS 98% · 74m left"
+[[ "$UPS_RIGHT_VAL" == "10% · ~81 W" ]] \
+    && ok "format_ups: load watts" || fail "format_ups: load watts" "$UPS_RIGHT_VAL" "10% · ~81 W"
+[[ "$UPS_COLOR" == "$GREEN" ]] && ok "format_ups: mains is green" || fail "format_ups: mains is green" "$UPS_COLOR" "GREEN"
+
+UPS_STATUS="OB DISCHRG"; format_ups
+[[ "$UPS_LEFT_VAL" == BATTERY* && "$UPS_COLOR" == "$ORANGE" ]] \
+    && ok "format_ups: on battery orange" || fail "format_ups: on battery orange" "$UPS_LEFT_VAL" "BATTERY…"
+UPS_STATUS="OB LB"; format_ups
+[[ "$UPS_LEFT_VAL" == "LOW BATT"* && "$UPS_COLOR" == "$RED" ]] \
+    && ok "format_ups: low battery red" || fail "format_ups: low battery red" "$UPS_LEFT_VAL" "LOW BATT…"
+
+# Row width: the power row must keep the box at exactly 80 visible chars
+UPS_STATUS="OL CHRG"
+mapfile -t net_lines < <(print_peers_network)
+last=$(strip_ansi "${net_lines[-1]}")
+[[ ${#last} -eq 80 ]] && ok "power row: width 80" || fail "power row: width 80" "${#last}" "80"
+[[ "$last" == *"Power"*"MAINS 98%"*"UPS load"* ]] \
+    && ok "power row: content" || fail "power row: content" "$last" "Power … MAINS 98% … UPS load"
+
+reset_ups
+mapfile -t net_lines < <(print_peers_network)
+[[ "$(strip_ansi "${net_lines[-1]}")" != *"Power"* ]] \
+    && ok "power row: hidden without NUT" || fail "power row: hidden without NUT" "${net_lines[-1]}" "no Power row"
+
+echo ""
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [[ $FAIL -eq 0 ]]
