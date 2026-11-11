@@ -82,3 +82,33 @@ python3 -m unittest -v alerting/test_healthcheck.py
 End to end: use **Send test notification** on the GitHub integration (opens a test issue),
 or temporarily point `XRPLD_ADMIN_RPC` at a dead port in the service and run
 `sudo systemctl start validator-healthcheck`.
+
+## UPS power alerts (optional)
+
+If the host is on a UPS that [NUT](https://networkupstools.org) can read,
+`ups_check.py` reports its state to a **second** Healthchecks.io check every
+minute:
+
+| UPS state | Ping | Alert |
+|---|---|---|
+| On mains (`OL`) | success | — (or "up" when power returns) |
+| On battery (`OB`) | `/fail` "mains power lost" + charge/runtime | immediate |
+| Low battery (`LB`) | `/fail` "host shutdown imminent" | immediate |
+| Replace battery (`RB`) / overload | `/fail` | immediate |
+| NUT/USB unreachable | `/fail` "status unavailable" | immediate |
+
+Healthchecks.io only emails on state changes, so an outage gives one "down"
+and one "up" email. If the cut also takes out the router, pings stop and the
+check alerts after its grace period instead.
+
+Setup: create a check (Simple, period 1 minute, grace 5 minutes) with **email
+only**. Leave the GitHub integration off for it, since `outage-tracker.yml`
+only closes issues for the validator check. Then:
+
+```bash
+sudo bash alerting/install-ups.sh   # prompts for the UPS name + ping URL once
+```
+
+The MOTD shows a **Power** row (status, charge, runtime, load in watts)
+whenever `upsc` can reach a UPS; set `UPS_NAME` in `validator.conf` to pick
+one when NUT serves several.
