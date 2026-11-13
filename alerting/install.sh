@@ -40,6 +40,8 @@ Type=oneshot
 User=${VALIDATOR_USERNAME}
 EnvironmentFile=${SYSTEM_CONFIG}
 EnvironmentFile=${HC_ENV}
+# Holds the consecutive-failure counter used to debounce /fail pings.
+StateDirectory=validator-healthcheck
 ExecStart=/usr/bin/python3 ${REPO_PATH}/alerting/healthcheck.py
 TimeoutStartSec=45
 EOF

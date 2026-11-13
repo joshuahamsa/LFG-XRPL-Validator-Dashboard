@@ -1,6 +1,7 @@
 import json
 import os
 import sys
+import tempfile
 import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -112,6 +113,77 @@ class MainTests(unittest.TestCase):
     def test_missing_ping_url_exits_2(self):
         del os.environ["HC_PING_URL"]
         self.assertEqual(healthcheck.main(), 2)
+
+
+class DebounceTests(unittest.TestCase):
+    """HC_FAIL_AFTER consecutive failures are needed before /fail is sent."""
+
+    def setUp(self):
+        MainTests.setUp(self)  # same fake RPC + Healthchecks server
+        self.tmp = tempfile.TemporaryDirectory()
+        os.environ["STATE_DIRECTORY"] = self.tmp.name
+        os.environ["HC_FAIL_AFTER"] = "3"
+
+    def tearDown(self):
+        MainTests.tearDown(self)
+        self.tmp.cleanup()
+
+    def run_with(self, inf):
+        _Recorder.rpc_response = {"result": {"info": inf}}
+        healthcheck.main()
+        return _Recorder.pings[-1]
+
+    def test_short_blip_never_sends_fail(self):
+        path, body = self.run_with(info(age=60))
+        self.assertEqual(path, "/hc/uuid")
+        self.assertIn("transient (1/3)", body)
+        self.assertIn("60s old", body)
+        path, body = self.run_with(info(age=45))
+        self.assertEqual(path, "/hc/uuid")
+        self.assertIn("transient (2/3)", body)
+        path, _ = self.run_with(info())
+        self.assertEqual(path, "/hc/uuid")
+        self.assertNotIn("/fail", "".join(p for p, _ in _Recorder.pings))
+
+    def test_sustained_failure_sends_fail_on_nth_check(self):
+        self.run_with(info(state="syncing"))
+        self.run_with(info(state="syncing"))
+        path, body = self.run_with(info(state="syncing"))
+        self.assertEqual(path, "/hc/uuid/fail")
+        self.assertIn("server_state=syncing", body)
+        self.assertIn("3 consecutive checks", body)
+        path, _ = self.run_with(info(state="syncing"))
+        self.assertEqual(path, "/hc/uuid/fail")
+
+    def test_recovery_resets_streak(self):
+        self.run_with(info(age=60))
+        self.run_with(info(age=60))
+        self.run_with(info())
+        path, body = self.run_with(info(age=60))
+        self.assertEqual(path, "/hc/uuid")
+        self.assertIn("transient (1/3)", body)
+
+    def test_fail_after_1_alerts_immediately(self):
+        os.environ["HC_FAIL_AFTER"] = "1"
+        path, _ = self.run_with(info(age=60))
+        self.assertEqual(path, "/hc/uuid/fail")
+
+    def test_no_state_dir_alerts_immediately(self):
+        del os.environ["STATE_DIRECTORY"]
+        path, _ = self.run_with(info(age=60))
+        self.assertEqual(path, "/hc/uuid/fail")
+
+    def test_unwritable_state_dir_alerts_immediately(self):
+        os.environ["STATE_DIRECTORY"] = os.path.join(self.tmp.name, "missing", "dir")
+        path, _ = self.run_with(info(age=60))
+        self.assertEqual(path, "/hc/uuid/fail")
+
+    def test_corrupt_state_file_treated_as_zero(self):
+        with open(os.path.join(self.tmp.name, "fail_streak"), "w") as f:
+            f.write("garbage")
+        path, body = self.run_with(info(age=60))
+        self.assertEqual(path, "/hc/uuid")
+        self.assertIn("transient (1/3)", body)
 
 
 if __name__ == "__main__":
