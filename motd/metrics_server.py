@@ -105,6 +105,37 @@ _rapl_prev_uj: "int | None" = None
 _rapl_prev_ts: "float | None" = None
 
 
+def stability_metrics(info):
+    """Node-stability figures from server_info, all "since xrpld started".
+
+    peer_disconnects counts every closed peer connection (either side), so it is
+    peer churn, not this node dropping off the network. The node's own dropouts
+    come from state_accounting: xrpld seeds disconnected.transitions with 1 for
+    the boot itself (NetworkOPs StateAccounting ctor), so subtract it.
+    """
+    acct = info.get("state_accounting") or {}
+
+    def _int(v):
+        try:
+            return int(v)
+        except (TypeError, ValueError):
+            return 0
+
+    durations = {k: _int(v.get("duration_us")) for k, v in acct.items() if isinstance(v, dict)}
+    total = sum(durations.values())
+    sync_pct = round(durations.get("full", 0) * 100 / total, 2) if total else None
+    disc = acct.get("disconnected") or {}
+    dropouts = max(_int(disc.get("transitions")) - 1, 0) if disc else None
+    uptime = _int(info.get("uptime"))
+    churn = _int(info.get("peer_disconnects"))
+    return {
+        "sync_pct": sync_pct,
+        "dropouts": dropouts,
+        "state_duration_s": _int(info.get("server_state_duration_us")) // 1_000_000,
+        "peer_churn_per_day": round(churn * 86400 / uptime, 1) if uptime else None,
+    }
+
+
 def get_validator_info():
     try:
         raw = subprocess.check_output(
@@ -123,6 +154,7 @@ def get_validator_info():
             "rippled_uptime_s": int(info.get("uptime", 0) or 0),
             "build_version": info.get("build_version", "unknown"),
             "amendment_blocked": info.get("amendment_blocked", False),
+            **stability_metrics(info),
         }
     except Exception:
         return {
@@ -135,6 +167,10 @@ def get_validator_info():
             "rippled_uptime_s": 0,
             "build_version": "unknown",
             "amendment_blocked": False,
+            "sync_pct": None,
+            "dropouts": None,
+            "state_duration_s": 0,
+            "peer_churn_per_day": None,
         }
 
 
