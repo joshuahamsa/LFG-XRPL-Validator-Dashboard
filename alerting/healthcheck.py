@@ -21,6 +21,7 @@ import urllib.error
 import urllib.request
 
 DEFAULT_MAX_LEDGER_AGE = 30  # seconds; ledgers close every ~3-4s
+DEFAULT_FAIL_AFTER = 3  # consecutive failed checks (1/min) before /fail
 RPC_TIMEOUT = 10
 PING_TIMEOUT = 10
 
@@ -62,6 +63,42 @@ def check(admin_rpc, max_ledger_age):
     return evaluate(info, max_ledger_age)
 
 
+def _streak_path():
+    # systemd's StateDirectory= sets STATE_DIRECTORY (writable by User=).
+    state_dir = os.environ.get("STATE_DIRECTORY", "").split(":")[0]
+    return os.path.join(state_dir, "fail_streak") if state_dir else None
+
+
+def debounce(ok, reason, fail_after, path):
+    """Return (send_fail, reason) after updating the consecutive-failure streak.
+
+    Short sync blips (a ledger 30-60 s stale, a minute of `syncing`) recover
+    by themselves and used to page on every occurrence. A /fail is now sent
+    only once `fail_after` consecutive checks have failed. Earlier failures go
+    out as a success ping whose body says "transient", so they still appear
+    in the Healthchecks.io event log. With no usable state file it falls back
+    to alerting immediately: losing the debounce is better than losing alerts.
+    """
+    if fail_after <= 1 or path is None:
+        return (not ok), reason
+    try:
+        with open(path) as f:
+            streak = int(f.read().strip() or 0)
+    except (OSError, ValueError):
+        streak = 0
+    streak = 0 if ok else streak + 1
+    try:
+        with open(path, "w") as f:
+            f.write(str(streak))
+    except OSError:
+        return (not ok), reason
+    if ok:
+        return False, reason
+    if streak >= fail_after:
+        return True, f"{reason} [{streak} consecutive checks]"
+    return False, f"transient ({streak}/{fail_after}): {reason}"
+
+
 def ping(ping_url, ok, reason):
     url = ping_url.rstrip("/") + ("" if ok else "/fail")
     req = urllib.request.Request(url, data=reason.encode(), method="POST")
@@ -77,10 +114,13 @@ def main():
     admin_rpc = os.environ.get("XRPLD_ADMIN_RPC", "127.0.0.1:5006")
     max_age = int(os.environ.get("HC_MAX_LEDGER_AGE", DEFAULT_MAX_LEDGER_AGE))
 
+    fail_after = int(os.environ.get("HC_FAIL_AFTER", DEFAULT_FAIL_AFTER))
+
     ok, reason = check(admin_rpc, max_age)
     print(("OK: " if ok else "FAIL: ") + reason)
+    send_fail, reason = debounce(ok, reason, fail_after, _streak_path())
     try:
-        ping(ping_url, ok, reason)
+        ping(ping_url, not send_fail, reason)
     except (urllib.error.URLError, OSError) as exc:
         # Expected during a WAN outage -- the missing ping IS the alert.
         print(f"ping not delivered: {exc.__class__.__name__}", file=sys.stderr)

@@ -18,9 +18,20 @@ stop or report a failure.
 |---|---|---|
 | WAN / router / ISP down | pings stop | after the grace period |
 | Host down (power, kernel, reboot loop) | pings stop | after the grace period |
-| xrpld stopped / crashed / OOM-killed | `/fail` "admin RPC unreachable" | immediate |
-| xrpld up but not `proposing`, or validated ledger > 30 s old | `/fail` with the state | immediate |
-| Amendment blocked | `/fail` "amendment blocked" | immediate |
+| xrpld stopped / crashed / OOM-killed | `/fail` "admin RPC unreachable" | after 3 failed checks (~3 min) |
+| xrpld up but not `proposing`, or validated ledger > 30 s old | `/fail` with the state | after 3 failed checks (~3 min) |
+| Amendment blocked | `/fail` "amendment blocked" | after 3 failed checks (~3 min) |
+
+**Debounce.** The node regularly falls a ledger or two behind for under a
+minute and recovers by itself. Paging on each of those buried the real outages
+(13 of 16 alerts over Oct 30 to Nov 13 2026 were blips like this). So
+`healthcheck.py` sends `/fail` only after `HC_FAIL_AFTER` (default 3)
+consecutive failed checks. Earlier failures go out as a normal ping with a
+`transient (n/3): <reason>` body, so they stay visible in the check's event log
+without alerting. The counter lives in `/var/lib/validator-healthcheck/`
+(systemd `StateDirectory=`). If it can't be read or written, the check falls
+back to alerting immediately. Set `HC_FAIL_AFTER=1` in `healthcheck.env` to
+restore the old behaviour.
 
 The check must use the **admin** RPC. The public port reports `full` for a
 healthy validator and hides `pubkey_validator`.
